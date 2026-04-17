@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -60,8 +61,8 @@ func incomingConnection(w http.ResponseWriter, r *http.Request) {
 
 func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 	// Set a process run global context
-	processCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	processCtx, processCancel := context.WithCancel(context.Background())
+	defer processCancel()
 	// Prepare process
 	subProcess := exec.CommandContext(processCtx, mcpServerCmdline[0], mcpServerCmdline[1:]...)
 	var (
@@ -100,51 +101,97 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 		return
 	}
 	// Start the IO workers
-	// Note: We use sync.WaitGroup + channels instead of errgroup.WithContext() to avoid
-	// premature context cancellation. When one worker exits, the other must continue
-	// until it completes its task naturally (e.g., sender reads stdout until EOF).
-	// Error variables are written before their done channel is closed, so reading them
-	// after <-doneChannel is safe (channel close provides memory barrier).
-	var (
-		workers     sync.WaitGroup
-		receiverErr *websocket.CloseError // Safe to read after <-receiverDone
-		senderErr   error                 // Safe to read after <-senderDone
-	)
-	receiverDone := make(chan struct{})
-	workers.Add(1)
+	var workers sync.WaitGroup
+	receiverChan := make(chan *websocket.CloseError, 1)
+	senderChan := make(chan *websocket.CloseError, 1)
+	workers.Add(2)
 	go func() {
-		receiverErr = receiver(processCtx, wsc, subProcessStdinWriter, logger.With("component", "receiver"))
-		close(receiverDone)
+		receiverChan <- receiver(processCtx, wsc, subProcessStdinWriter, logger.With("component", "receiver"))
+		workers.Done()
 	}()
-	senderDone := make(chan struct{})
-	workers.Add(1)
 	go func() {
-		senderErr = sender(processCtx, wsc, subProcessStdoutReader, subProcessStderrReader, logger.With("component", "sender"))
-		close(senderDone)
+		senderChan <- sender(processCtx, wsc, subProcessStdoutReader, subProcessStderrReader, logger.With("component", "sender"))
+		workers.Done()
 	}()
 	// Wait for either worker to finish first. The first exit determines the root cause:
 	// - receiver first: client initiated shutdown (normal) or websocket error → use closeWith to close websocket
 	// - sender first: process died unexpectedly → cancel context, wait for receiver to finish (ignore its error)
-	// The second worker will likely fail due to context/process cancellation—this is collateral damage, not
-	// the root cause. We wait for it to finish cleanly but ignore its error.
+	var finalClose *websocket.CloseError
 	select {
-	case <-receiverDone:
-		// Receiver exited first: use closeWith to close websocket if non-nil
-		// If nil, websocket already dead, skip close
-		// Sender will finish when process exits (stdout EOF)
-
-	case <-senderDone:
-		// Sender exited first: process died unexpectedly
-		// Cancel context to stop receiver, wait for it to finish, ignore its error
-
+	case finalClose = <-receiverChan:
+		// Receiver finished first → close websocket with its instructions
+		// TODO
+	case finalClose = <-senderChan:
+		// Sender finished first → cancel context and wait for receiver to finish
+		// TODO
 	}
-	// Wait for the process to finish with a timeout
+	return // hide following that must be adapted to the new select upper
+	// Wait for the process to finish with a timeout and build exit payload
 	subProcess.WaitDelay = protocol.SubProcessGracePeriod
-	if err := subProcess.Wait(); err != nil {
-		logger.Error("process failed", slog.Any("error", err))
-	}
-	// Wait for the workers to properly finish
+	waitErr := subProcess.Wait()
+	processCancel() // free the other worker, now that process has finished
+	// Wait for the workers to properly finish (eg if receiver triggered the close, let the sender read and send all stdout/stderr during the grace period)
 	workers.Wait()
+	// Build server_exited OoB payload based on exit status
+	var (
+		exitPayload protocol.OoBMessageServerExitedPayload
+		exitErr     *exec.ExitError
+	)
+	switch {
+	case waitErr == nil:
+		// Clean exit - retrieve actual exit code (should be 0, but don't assume)
+		code := subProcess.ProcessState.ExitCode()
+		exitPayload = protocol.OoBMessageServerExitedPayload{
+			ExitCode: &code,
+			Killed:   false,
+		}
+		if code != 0 {
+			logger.Warn("MCP server exited cleanly but with non-zero code",
+				slog.Int("exit_code", code),
+			)
+		} else {
+			logger.Info("MCP server exited cleanly")
+		}
+	case errors.As(waitErr, &exitErr):
+		// Process exited with error - get exit code (works cross-platform)
+		code := exitErr.ExitCode()
+		logger.Warn("MCP server exited with error",
+			slog.Int("exit_code", code),
+		)
+		exitPayload = protocol.OoBMessageServerExitedPayload{
+			ExitCode: &code,
+			Killed:   false,
+		}
+	case errors.Is(waitErr, exec.ErrWaitDelay):
+		// WaitDelay expired - process was force-killed
+		logger.Warn("MCP server did not exit gracefully (killed after timeout)",
+			slog.Duration("grace_period", protocol.SubProcessGracePeriod),
+		)
+		exitPayload = protocol.OoBMessageServerExitedPayload{
+			Killed: true,
+		}
+	default:
+		// Unexpected I/O or system error (no exit code available)
+		logger.Error("MCP server wait failed", slog.Any("error", waitErr))
+		exitPayload = protocol.OoBMessageServerExitedPayload{
+			Killed: true,
+		}
+	}
+	// Send OoB message if the websocket is still open
+	if finalClose != nil {
+		if msg, err := exitPayload.WebSocketMessage(); err != nil {
+			logger.Error("failed to marshal server_exited message", slog.Any("error", err))
+		} else if writeErr := wsc.Write(processCtx, websocket.MessageText, msg); writeErr != nil {
+			// Websocket might already be closed - don't treat as fatal
+			logger.Error("failed to send server_exited (client may be disconnected)",
+				slog.Any("error", writeErr),
+			)
+		}
+	}
+	// Finaly, close the websocket with the appropriate code
+	if err = wsc.Close(finalClose.Code, finalClose.Reason); err != nil {
+		logger.Error("failed to close websocket properly", slog.Any("error", err))
+	}
 }
 
 // receiver reads from websocket and writes to process stdin.
@@ -246,7 +293,7 @@ func receiver(ctx context.Context, wsc *websocket.Conn, processStdin io.WriteClo
 	}
 }
 
-func sender(ctx context.Context, wsc *websocket.Conn, processStdout, processStderr io.Reader, logger *slog.Logger) (err error) {
+func sender(ctx context.Context, wsc *websocket.Conn, processStdout, processStderr io.Reader, logger *slog.Logger) (closeWith *websocket.CloseError) {
 	// TODO
 	return nil
 }
