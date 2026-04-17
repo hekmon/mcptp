@@ -84,7 +84,7 @@ var Command = &cli.Command{
 		return ctx, nil
 	},
 	Action: func(ctx context.Context, cmd *cli.Command) error {
-		fmt.Printf("Starting sever on ws://%s:%d\n", bindAddress, port)
+		fmt.Printf("Starting server on ws://%s:%d\n", bindAddress, port)
 		fmt.Printf("A connection will launch the following command: %q\n", strings.Join(mcpServerCmdline, " "))
 		return nil
 	},

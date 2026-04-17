@@ -105,7 +105,19 @@ Two modes are supported:
 - **Secure mode** (`wss://`): WebSocket over TLS with optional mTLS authentication. Recommended for connections over public or untrusted networks.
 - **Plain mode** (`ws://`): Unencrypted WebSocket. Suitable only for trusted environments such as VPNs, localhost, or isolated networks.
 
-### 5.3 Why not raw TCP framing
+### 5.3 Address and port separation
+
+The server uses separate `--bind` and `--port` flags rather than a combined `--listen` flag. This provides:
+- clearer separation of concerns,
+- flexibility to specify address only, port only, or both,
+- consistency with common CLI conventions.
+
+Examples:
+- `--bind :7777` - bind to all interfaces on port 7777
+- `--bind 0.0.0.0 --port 7777` - explicitly bind to IPv4 all interfaces
+- `--bind :: --port 7777` - bind to all IPv6 interfaces
+
+### 5.4 Why not raw TCP framing
 
 A custom `[stream][length][payload]` framing scheme would work, but WebSocket removes the need to define and maintain a private framing layer.  
 For a small self-hosted proxy, standard transport semantics are preferable to inventing a custom one.
@@ -430,7 +442,8 @@ Suggested options:
 ### Remote proxy
 
 Suggested options:
-- `--listen :7777`
+- `--bind ADDRESS` - Address to bind to (e.g., `:7777`, `0.0.0.0`, `::`). Required.
+- `--port PORT` - Port to bind to (e.g., `7777`). Optional, can be included in `--bind` as `:PORT`. Default: 7777.
 - `--ca path/to/ca.crt` (TLS mode only)
 - `--server-cert path/to/server.crt` (TLS mode only)
 - `--server-key path/to/server.key` (TLS mode only)
