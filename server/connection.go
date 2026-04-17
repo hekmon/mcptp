@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os/exec"
-	"sync"
 	"sync/atomic"
 
 	"github.com/hekmon/mcproxy/protocol"
@@ -101,37 +100,71 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 		return
 	}
 	// Start the IO workers
-	var workers sync.WaitGroup
 	receiverChan := make(chan *websocket.CloseError, 1)
-	senderChan := make(chan *websocket.CloseError, 1)
-	workers.Add(2)
+	receiverContext, receiverContextCancel := context.WithCancel(processCtx)
+	defer receiverContextCancel()
 	go func() {
-		receiverChan <- receiver(processCtx, wsc, subProcessStdinWriter, logger.With("component", "receiver"))
-		workers.Done()
+		receiverChan <- receiver(receiverContext, wsc, subProcessStdinWriter, logger.With("component", "receiver"))
 	}()
+	senderChan := make(chan *websocket.CloseError, 1)
+	// senderContext, senderContextCancel := context.WithCancel(processCtx)
+	// defer senderContextCancel()
 	go func() {
 		senderChan <- sender(processCtx, wsc, subProcessStdoutReader, subProcessStderrReader, logger.With("component", "sender"))
-		workers.Done()
 	}()
 	// Wait for either worker to finish first. The first exit determines the root cause:
-	// - receiver first: client initiated shutdown (normal) or websocket error → use closeWith to close websocket
+	// - receiver first: client initiated shutdown (normal) or websocket issue → use closeWith to close websocket
 	// - sender first: process died unexpectedly → cancel context, wait for receiver to finish (ignore its error)
 	var finalClose *websocket.CloseError
 	select {
 	case finalClose = <-receiverChan:
 		// Receiver finished first → close websocket with its instructions
-		// TODO
+		logger.Debug("receiver finished first: stopping process",
+			slog.Int("desired_close_code", int(finalClose.Code)),
+			slog.String("desired_close_reason", finalClose.Reason),
+			slog.Duration("wait_grace_period", subProcess.WaitDelay),
+		)
+		// Stop process
+		subProcess.WaitDelay = protocol.SubProcessGracePeriod
+		if err = subProcess.Wait(); err != nil {
+			logger.Error("process did not finish gracefully",
+				slog.Any("error", err),
+			)
+			// Before closing, make sure the sender had time to drain stdout/stderr and sent it (but discard its own errors)
+			logger.Debug("waiting for sender to finish")
+			<-senderChan
+			// Adapt returned closing reason
+			if finalClose == nil {
+				// receiver indicates an issue with websocket connection, to not bother trying to send error
+			} else if finalClose.Code != websocket.StatusNormalClosure {
+				// We were not about to send a normal closure → send original error
+			} else {
+				// TODO - we were about to send a normal closure → adapt closing to wait error
+			}
+		} else {
+			// Process finished normally: wait for sender to finish (drain stdout/stderr and send it)
+			logger.Debug("process finished normally, waiting for sender to finish")
+			<-senderChan
+			// TODO - send exit payload
+			// TODO - send closeWith
+		}
+		// TODO - wait for sender to finish (drain stdout/stderr)
 	case finalClose = <-senderChan:
-		// Sender finished first → cancel context and wait for receiver to finish
-		// TODO
+		// Sender finished first
+		logger.Debug("sender finished first, something went wrong with process: cancelling receiver context and wait for it to finish",
+			slog.Int("desired_close_code", int(finalClose.Code)),
+			slog.String("desired_close_reason", finalClose.Reason),
+		)
+		receiverContextCancel()
+		<-receiverChan // error will most likely be context canceled, discard it
+		// TODO - send exit payload
+		// TODO - send closeWith
 	}
 	return // hide following that must be adapted to the new select upper
 	// Wait for the process to finish with a timeout and build exit payload
 	subProcess.WaitDelay = protocol.SubProcessGracePeriod
 	waitErr := subProcess.Wait()
 	processCancel() // free the other worker, now that process has finished
-	// Wait for the workers to properly finish (eg if receiver triggered the close, let the sender read and send all stdout/stderr during the grace period)
-	workers.Wait()
 	// Build server_exited OoB payload based on exit status
 	var (
 		exitPayload protocol.OoBMessageServerExitedPayload
