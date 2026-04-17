@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
+	"strings"
 	"sync/atomic"
 
 	"github.com/urfave/cli/v3"
@@ -19,7 +21,8 @@ var (
 	port           int
 	maxConnections int
 	// Runtime
-	nbConn atomic.Int64
+	nbConn           atomic.Int64
+	mcpServerCmdline []string
 )
 
 var Command = &cli.Command{
@@ -68,8 +71,21 @@ var Command = &cli.Command{
 			},
 		},
 	},
+	Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+		// Verify the command to spawn
+		mcpServerCmdline = cmd.Args().Slice()
+		if len(mcpServerCmdline) == 0 {
+			return ctx, errors.New("no command to spawn on incoming connections")
+		}
+		var err error
+		if mcpServerCmdline[0], err = exec.LookPath(mcpServerCmdline[0]); err != nil {
+			return ctx, fmt.Errorf("command %q not found: %w", mcpServerCmdline[0], err)
+		}
+		return ctx, nil
+	},
 	Action: func(ctx context.Context, cmd *cli.Command) error {
 		fmt.Printf("Starting sever on ws://%s:%d\n", bindAddress, port)
+		fmt.Printf("A connection will launch the following command: %q\n", strings.Join(mcpServerCmdline, " "))
 		return nil
 	},
 }
