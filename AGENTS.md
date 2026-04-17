@@ -178,30 +178,47 @@ This design therefore treats remote server stderr forwarding as a **feature flag
 
 The remote proxy may:
 - capture the server's stderr,
-- log it locally through its own logging system,
+- log it locally through its own structured logging system,
 - optionally forward it to the local proxy via text WebSocket messages.
 
-The remote proxy may also log its own operational events independently.
+The remote proxy logs its own operational events using Go's `slog` structured logging package.
+
+**Logging features:**
+- **Structured output**: All logs are structured for easy parsing and filtering
+- **Adaptive format**:
+  - When running under systemd: automatically uses journald format
+  - When stderr is a TTY: uses human-readable text format
+  - Otherwise: uses JSON format for machine parsing
+- **Configurable log levels**: `DEBUG`, `INFO`, `WARN`, `ERROR` (default: `INFO`)
+- **Source tracking**: Debug mode includes source file and line numbers
+- **Invocation tracking**: Under systemd, includes invocation ID for session correlation
+
+**Configuration:**
+- `--log-level LEVEL` or `-l LEVEL`: Set the minimum log level to emit
+
+The remote proxy may also log operational events independently of the spawned MCP server.
 
 ### 8.2 Local proxy
 
-The local proxy may:
-- write its own operational logs to local stderr,
+The local proxy uses the same structured logging infrastructure as the remote proxy:
+- writes its own operational logs to local stderr,
 - optionally re-emit remote server stderr to local stderr.
 
 Because clients that launch stdio-based servers commonly display stderr as plain text logs rather than parse it as protocol data, mixing local proxy logs and forwarded remote server stderr on local stderr is acceptable as long as the source is clearly prefixed.
 
-Recommended prefixes:
-- `[PROXY]`
-- `[SERVER]`
+Recommended prefixes for forwarded stderr:
+- `[PROXY]` for local proxy operational messages
+- `[SERVER]` for forwarded remote server stderr
 
 ### 8.3 Default
 
 Default:
 - `forwardServerStderr = false`
+- `logLevel = INFO`
 
 Debug mode:
 - `forwardServerStderr = true`
+- `logLevel = DEBUG` (includes source tracking)
 
 ## 9. JSON-RPC inspection
 
@@ -431,19 +448,20 @@ For such servers, recommended deployment is:
 ### Local proxy
 
 Suggested options:
-- `--remote wss://host:port/path` (TLS mode) or `--remote ws://host:port/path` (plain mode)
+- `--remote ws(s)://host:port/path` - WebSocket URL (required). Use `ws://` for plain mode or `wss://` for TLS mode.
+- `--log-level LEVEL` or `-l LEVEL` - Set minimum log level (`DEBUG`, `INFO`, `WARN`, `ERROR`). Default: `INFO`.
 - `--ca path/to/ca.crt` (TLS mode only)
 - `--client-cert path/to/client.crt` (TLS mode only, for mTLS)
 - `--client-key path/to/client.key` (TLS mode only, for mTLS)
 - `--forward-server-stderr`
 - `--log-jsonrpc`
-- `--verbose`
 
 ### Remote proxy
 
 Suggested options:
 - `--bind ADDRESS` - Address to bind to (e.g., `:7777`, `0.0.0.0`, `::`). Required.
-- `--port PORT` - Port to bind to (e.g., `7777`). Optional, can be included in `--bind` as `:PORT`. Default: 7777.
+- `--port PORT` - Port to bind to (e.g., `7777`). Optional, can be included in `--bind` as `:PORT`. Default: 8623.
+- `--log-level LEVEL` or `-l LEVEL` - Set minimum log level (`DEBUG`, `INFO`, `WARN`, `ERROR`). Default: `INFO`.
 - `--ca path/to/ca.crt` (TLS mode only)
 - `--server-cert path/to/server.crt` (TLS mode only)
 - `--server-key path/to/server.key` (TLS mode only)
@@ -476,6 +494,7 @@ For this project, the recommended defaults are:
 - JSON-RPC inspection: enabled optionally, read-only
 - max connections: unlimited by default, configurable to `1`
 - overload behavior: reject
+- log level: `INFO` by default, `DEBUG` for debug mode (includes source tracking)
 
 ## 20. Final design statement
 
