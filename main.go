@@ -7,15 +7,21 @@ import (
 	"runtime"
 	"runtime/debug"
 
+	"github.com/hekmon/mcproxy/client"
+	"github.com/hekmon/mcproxy/server"
+
 	"github.com/urfave/cli/v3"
 )
 
 func main() {
 	cmd := &cli.Command{
-		Name:      "mcproxy",
-		Usage:     "A network proxy for stdio only MCP servers",
-		Version:   version(),
-		Commands:  []*cli.Command{},
+		Name:    "mcproxy",
+		Usage:   "A network proxy for stdio only MCP servers",
+		Version: version(),
+		Commands: []*cli.Command{
+			client.Command,
+			server.Command,
+		},
 	}
 	err := cmd.Run(context.Background(), os.Args)
 	if err != nil {
