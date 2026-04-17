@@ -39,7 +39,7 @@ func CreateLogger(requestedLogLevel string) (logger *slog.Logger) {
 	default:
 		opts.Level = DefaultLevel
 		defer func() {
-			logger.Debug("log level not set or invalid: setting default level",
+			logger.Warn("log level not set or invalid: setting default level",
 				slog.String("requested_level", requestedLogLevel),
 				slog.String("default_level", DefaultLevel.String()),
 			)
