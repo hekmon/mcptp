@@ -73,11 +73,11 @@ var Command = &cli.Command{
 	},
 	Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 		// Verify the command to spawn
-		mcpServerCmdline = cmd.Args().Slice()
-		if len(mcpServerCmdline) == 0 {
+		if cmd.Args().Len() == 0 {
 			return ctx, errors.New("no command to spawn on incoming connections")
 		}
 		var err error
+		mcpServerCmdline = cmd.Args().Slice()
 		if mcpServerCmdline[0], err = exec.LookPath(mcpServerCmdline[0]); err != nil {
 			return ctx, fmt.Errorf("command %q not found: %w", mcpServerCmdline[0], err)
 		}
