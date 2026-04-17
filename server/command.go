@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
-	"sync/atomic"
 
 	"github.com/hekmon/mcproxy/logging"
 
@@ -27,7 +26,6 @@ var (
 	maxConnections int64
 	logLevel       string
 	// Runtime
-	nbConn           atomic.Int64
 	mcpServerCmdline []string
 	logger           *slog.Logger
 )
