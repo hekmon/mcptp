@@ -8,5 +8,5 @@ import (
 
 const (
 	CompressionMode       = websocket.CompressionContextTakeover
-	SubProcessGracePeriod = 10 * time.Second
+	SubProcessGracePeriod = 5 * time.Second
 )

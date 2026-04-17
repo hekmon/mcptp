@@ -85,6 +85,38 @@ Recommended remote shutdown order:
 3. send SIGTERM if still running,
 4. send SIGKILL only as a last resort.
 
+### 4.4 Worker concurrency model
+
+The remote proxy uses two independent worker goroutines per connection:
+
+- **receiver**: reads from websocket → writes to process stdin
+- **sender**: reads from process stdout/stderr → writes to websocket
+
+**Synchronization pattern:**
+- Each worker has a `done` channel closed after it finishes
+- Error variables are written *before* their done channel is closed
+- Reading errors after `<-doneChan` is race-free (channel close provides memory barrier)
+
+**Why not errgroup.WithContext()?**
+- `errgroup.WithContext()` cancels the context immediately on first error
+- This would prematurely stop the second worker mid-operation
+- Example: if sender exits (process died), receiver must still be allowed to return cleanly
+- Using `sync.WaitGroup` + channels lets both workers finish naturally
+
+**Error semantics:**
+- First worker to exit = **root cause** (acted upon)
+- Second worker to exit = **collateral damage** (waited for, error ignored)
+- `receiver` returns `*websocket.CloseError`:
+  - Non-nil: caller should close websocket with these codes (instructions for how TO close)
+  - Nil: websocket already dead, no Close() needed
+
+**Shutdown flow:**
+1. Client sends OoB shutdown OR websocket closes
+2. receiver exits, closes process stdin (EOF signal for MCP)
+3. Process exits gracefully (or WaitDelay kills it)
+4. sender exits when stdout/stderr EOF
+5. Both workers finished, connection cleanup complete
+
 ## 5. Transport choice
 
 ### 5.1 WebSocket

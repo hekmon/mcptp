@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -76,34 +75,68 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 	// Start the process
 	if err := subProcess.Start(); err != nil {
 		logger.Error("failed to start process", slog.Any("error", err))
-		// TODO: send error to client
+		// Send error to client
+		msg, err := protocol.OoBMessageStartErrPayload{
+			Error: err.Error(),
+		}.WebSocketMessage()
+		if err != nil {
+			logger.Error("failed to marshal error message", slog.Any("error", err))
+			return
+		}
+		if err = wsc.Write(processCtx, websocket.MessageText, msg); err != nil {
+			logger.Error("failed to send error message", slog.Any("error", err))
+		}
+		return
+	}
+	msg, err := protocol.OoBMessageStartOKPayload{
+		PID: subProcess.Process.Pid,
+	}.WebSocketMessage()
+	if err != nil {
+		logger.Error("failed to marshal start ok message", slog.Any("error", err))
+		return
+	}
+	if err = wsc.Write(processCtx, websocket.MessageText, msg); err != nil {
+		logger.Error("failed to send start ok message", slog.Any("error", err))
 		return
 	}
 	// Start the IO workers
+	// Note: We use sync.WaitGroup + channels instead of errgroup.WithContext() to avoid
+	// premature context cancellation. When one worker exits, the other must continue
+	// until it completes its task naturally (e.g., sender reads stdout until EOF).
+	// Error variables are written before their done channel is closed, so reading them
+	// after <-doneChannel is safe (channel close provides memory barrier).
 	var (
-		workers                sync.WaitGroup
-		receiverErr, senderErr error
+		workers     sync.WaitGroup
+		receiverErr *websocket.CloseError // Safe to read after <-receiverDone
+		senderErr   error                 // Safe to read after <-senderDone
 	)
 	receiverDone := make(chan struct{})
 	workers.Add(1)
 	go func() {
-		receiverErr = receiver(processCtx, wsc, subProcessStdinWriter, logger)
+		receiverErr = receiver(processCtx, wsc, subProcessStdinWriter, logger.With("component", "receiver"))
 		close(receiverDone)
 	}()
 	senderDone := make(chan struct{})
 	workers.Add(1)
 	go func() {
-		senderErr = sender(processCtx, wsc, subProcessStdoutReader, subProcessStderrReader, logger)
+		senderErr = sender(processCtx, wsc, subProcessStdoutReader, subProcessStderrReader, logger.With("component", "sender"))
 		close(senderDone)
 	}()
-	// Wait for either the receiver or the sender to finish to act according to the error they returned
+	// Wait for either worker to finish first. The first exit determines the root cause:
+	// - receiver first: client initiated shutdown (normal) or websocket error → use closeWith to close websocket
+	// - sender first: process died unexpectedly → cancel context, wait for receiver to finish (ignore its error)
+	// The second worker will likely fail due to context/process cancellation—this is collateral damage, not
+	// the root cause. We wait for it to finish cleanly but ignore its error.
 	select {
 	case <-receiverDone:
-		// Act acordingly depending on receiverErr
-		// TODO
+		// Receiver exited first: use closeWith to close websocket if non-nil
+		// If nil, websocket already dead, skip close
+		// Sender will finish when process exits (stdout EOF)
+
 	case <-senderDone:
-		// Act acordingly depending on senderErr
-		// TODO
+		// Sender exited first: process died unexpectedly
+		// Cancel context to stop receiver, wait for it to finish, ignore its error
+
 	}
 	// Wait for the process to finish with a timeout
 	subProcess.WaitDelay = protocol.SubProcessGracePeriod
@@ -112,15 +145,20 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 	}
 	// Wait for the workers to properly finish
 	workers.Wait()
-	wsc.Close(websocket.StatusNormalClosure, "")
 }
 
-func receiver(ctx context.Context, wsc *websocket.Conn, processStdin io.WriteCloser, logger *slog.Logger) (err error) {
+// receiver reads from websocket and writes to process stdin.
+// Return value semantics (closeWith):
+//   - *CloseError: caller should close websocket with these codes (instructions for how TO close)
+//   - nil: websocket already closed/dead, no need to close
+func receiver(ctx context.Context, wsc *websocket.Conn, processStdin io.WriteCloser, logger *slog.Logger) (closeWith *websocket.CloseError) {
+	// Signal the subprocess we won't be sending any more data to it after this function returns (MCP signal for clean shutdown)
 	defer processStdin.Close()
 	// Start the read/write loop
 	var (
 		msgType websocket.MessageType
 		msg     []byte
+		err     error
 	)
 	wsc.SetReadLimit(-1) // disable read limit
 	for {
@@ -129,57 +167,81 @@ func receiver(ctx context.Context, wsc *websocket.Conn, processStdin io.WriteClo
 			statusCode := websocket.CloseStatus(err)
 			switch statusCode {
 			case -1:
+				// Error is not a websocket close error
 				logger.Error("failed to read websocket message", slog.Any("error", err))
-				return err
-			case websocket.StatusNormalClosure:
-				logger.Warn("websocket connection closed without OoB shutdown received")
-				// TODO initiate process shutdown
-				return nil
+				return &websocket.CloseError{
+					Code:   websocket.StatusInternalError,
+					Reason: fmt.Sprintf("failed to read websocket message: %s", err),
+				}
 			default:
 				// Websocket closed
 				logger.Warn("websocket connection closed without OoB shutdown received",
 					slog.Int("status_code", int(statusCode)),
 					slog.String("status_text", statusCode.String()),
 				)
-				return nil // TODO: return a normal stop
+				return nil // no need to close the websocket, it's already closed
 			}
 		}
 		// Handle the message
 		switch msgType {
 		case websocket.MessageBinary:
-			if _, err = processStdin.Write(msg); err != nil {
-				// TODO: handle error
-				logger.Error("failed to write to process stdin", slog.Any("error", err))
-				return
-			}
 			// TODO log JSON-RPC message
+			if _, err = processStdin.Write(msg); err != nil {
+				logger.Error("failed to write to process stdin", slog.Any("error", err))
+				return &websocket.CloseError{
+					Code:   websocket.StatusInternalError,
+					Reason: fmt.Sprintf("failed to write to process stdin: %s", err),
+				}
+			}
 		case websocket.MessageText:
 			// Unmarshal OoB message
 			var oobMessage protocol.OoBMessage
 			if err = json.Unmarshal(msg, &oobMessage); err != nil {
-				logger.Error("failed to unmarshal OOB message", slog.Any("error", err))
-				return
+				logger.Error("failed to unmarshal OoB message", slog.Any("error", err))
+				return &websocket.CloseError{
+					Code:   websocket.StatusUnsupportedData,
+					Reason: fmt.Sprintf("failed to unmarshal OoB message: %s", err),
+				}
 			}
-			logger.Info("received oob message", slog.String("type", string(oobMessage.Type)))
-			// Handle OOB message types
-			switch oobMessage.Type {
-			case protocol.OoBMessageShutdown:
-			// TODO: handle shutdown
+			// Handle OoB message
+			oobMsg, err := oobMessage.WebSocketMessagePayload()
+			if err != nil {
+				logger.Error("failed to extract OoB message payload", slog.Any("error", err))
+				return &websocket.CloseError{
+					Code:   websocket.StatusUnsupportedData,
+					Reason: fmt.Sprintf("failed to extract OoB message payload: %s", err),
+				}
+			}
+			switch typedMsg := oobMsg.(type) {
+			case protocol.OoBMessageShutdownPayload:
+				logger.Info("shutdown message received, closing stdin")
+				return &websocket.CloseError{
+					Code:   websocket.StatusNormalClosure,
+					Reason: "shutdown message acknowledged",
+				}
 			default:
 				if oobMessage.Type == "" {
 					logger.Error("unexpected text message received",
 						slog.String("msg", string(msg)),
 					)
-					return errors.New("unexpected text message received")
+					return &websocket.CloseError{
+						Code:   websocket.StatusUnsupportedData,
+						Reason: "unexpected text message received",
+					}
 				}
-				logger.Warn("unknown OOB message type",
+				logger.Warn("unknown OoB message type",
 					slog.String("type", string(oobMessage.Type)),
-					slog.String("payload", string(oobMessage.Payload)),
+					slog.Any("payload", typedMsg),
 				)
+				// continue
 			}
 		default:
-			logger.Error("unexpected message type", slog.Any("type", msgType))
-			return errors.New("unexpected message type")
+			// should never happen
+			logger.Error("unexpected websocket message type", slog.Any("type", msgType))
+			return &websocket.CloseError{
+				Code:   websocket.StatusUnsupportedData,
+				Reason: "unexpected websocket message type",
+			}
 		}
 	}
 }
