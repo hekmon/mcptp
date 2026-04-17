@@ -10,7 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/hekmon/mcproxy/logger"
+	"github.com/hekmon/mcproxy/logging"
+
 	"github.com/urfave/cli/v3"
 )
 
@@ -22,11 +23,12 @@ var (
 	// Config
 	bindAddress    string
 	port           int
-	maxConnections int
+	maxConnections int64
 	logLevel       string
 	// Runtime
 	nbConn           atomic.Int64
 	mcpServerCmdline []string
+	logger           *slog.Logger
 )
 
 var Command = &cli.Command{
@@ -37,14 +39,14 @@ var Command = &cli.Command{
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:             "log-level",
-			Usage:            fmt.Sprintf("Set the logging level. Valid values: %s", strings.Join(logger.GetLogLevels(), ", ")),
+			Usage:            fmt.Sprintf("Set the logging level. Valid values: %s", strings.Join(logging.GetLogLevels(), ", ")),
 			Aliases:          []string{"l"},
 			OnlyOnce:         true,
-			Value:            logger.DefaultLevel.String(),
+			Value:            logging.DefaultLevel.String(),
 			Destination:      &logLevel,
 			ValidateDefaults: true,
 			Validator: func(value string) error {
-				if !slices.Contains(logger.GetLogLevels(), strings.ToUpper(value)) {
+				if !slices.Contains(logging.GetLogLevels(), strings.ToUpper(value)) {
 					return fmt.Errorf("invalid log level: %q", value)
 				}
 				return nil
@@ -79,14 +81,14 @@ var Command = &cli.Command{
 				return nil
 			},
 		},
-		&cli.IntFlag{
+		&cli.Int64Flag{
 			Name:        "max-connections",
 			Usage:       "Maximum number of connections to accept. Each connection spawns a new process. 0 means illimited.",
 			Aliases:     []string{"n"},
 			Category:    "HTTP server",
 			OnlyOnce:    true,
 			Destination: &maxConnections,
-			Validator: func(value int) error {
+			Validator: func(value int64) error {
 				if value < 0 {
 					return errors.New("must be => 0")
 				}
@@ -108,12 +110,17 @@ var Command = &cli.Command{
 	},
 	Action: func(ctx context.Context, cmd *cli.Command) error {
 		// Create the logger
-		logger := logger.CreateLogger(logLevel)
+		logger = logging.CreateLogger(logLevel)
 		logger.Info("starting proxy server",
 			slog.String("listen", fmt.Sprintf("ws://%s:%d", bindAddress, port)),
-			slog.Int("max-connections", maxConnections),
+			slog.Int64("max-connections", maxConnections),
 			slog.String("command", strings.Join(mcpServerCmdline, " ")),
 		)
+		// Create the HTTP server
+		// httpServer := &http.Server{
+		// 	Addr:    fmt.Sprintf("%s:%d", bindAddress, port),
+		// 	Handler: http.HandlerFunc(incomingConnection),
+		// }
 		return nil
 	},
 }
