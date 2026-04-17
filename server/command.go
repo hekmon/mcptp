@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os/exec"
 	"slices"
 	"strings"
@@ -117,10 +118,13 @@ var Command = &cli.Command{
 			slog.String("command", strings.Join(mcpServerCmdline, " ")),
 		)
 		// Create the HTTP server
-		// httpServer := &http.Server{
-		// 	Addr:    fmt.Sprintf("%s:%d", bindAddress, port),
-		// 	Handler: http.HandlerFunc(incomingConnection),
-		// }
+		httpServer := &http.Server{
+			Addr:    fmt.Sprintf("%s:%d", bindAddress, port),
+			Handler: http.HandlerFunc(incomingConnection),
+		}
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			return cli.Exit(fmt.Errorf("failed to run HTTP server: %w", err), 1)
+		}
 		return nil
 	},
 }
