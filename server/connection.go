@@ -62,6 +62,7 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 	// Set a process run global context
 	processCtx, processCancel := context.WithCancel(context.Background())
 	defer processCancel()
+
 	// Prepare process
 	subProcess := exec.CommandContext(processCtx, mcpServerCmdline[0], mcpServerCmdline[1:]...)
 	var (
@@ -72,6 +73,7 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 	subProcess.Stdin, subProcessStdinWriter = io.Pipe()
 	subProcessStdoutReader, subProcess.Stdout = io.Pipe()
 	subProcessStderrReader, subProcess.Stderr = io.Pipe()
+
 	// Start the process
 	if err := subProcess.Start(); err != nil {
 		logger.Error("failed to start process", slog.Any("error", err))
@@ -99,6 +101,7 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 		logger.Error("failed to send start ok message", slog.Any("error", err))
 		return
 	}
+
 	// Start the IO workers
 	receiverChan := make(chan *websocket.CloseError, 1)
 	receiverContext, receiverContextCancel := context.WithCancel(processCtx)
@@ -112,19 +115,20 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 	go func() {
 		senderChan <- sender(processCtx, wsc, subProcessStdoutReader, subProcessStderrReader, logger.With("component", "sender"))
 	}()
+
 	// Wait for either worker to finish first. The first exit determines the root cause:
 	// - receiver first: client initiated shutdown (normal) or websocket issue → use closeWith to close websocket
 	// - sender first: process died unexpectedly → cancel context, wait for receiver to finish (ignore its error)
-	var finalClose *websocket.CloseError
+	var desiredClose *websocket.CloseError
 	select {
-	case finalClose = <-receiverChan:
+	case desiredClose = <-receiverChan:
 		// Receiver finished first → close websocket with its instructions
 		logger.Debug("receiver finished first: stopping process",
-			slog.Int("desired_close_code", int(finalClose.Code)),
-			slog.String("desired_close_reason", finalClose.Reason),
+			slog.Int("desired_close_code", int(desiredClose.Code)),
+			slog.String("desired_close_reason", desiredClose.Reason),
 			slog.Duration("wait_grace_period", subProcess.WaitDelay),
 		)
-		// Stop process
+		// Stop process first
 		subProcess.WaitDelay = protocol.SubProcessGracePeriod
 		if err = subProcess.Wait(); err != nil {
 			logger.Error("process did not finish gracefully",
@@ -134,9 +138,9 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 			logger.Debug("waiting for sender to finish")
 			<-senderChan
 			// Adapt returned closing reason
-			if finalClose == nil {
+			if desiredClose == nil {
 				// receiver indicates an issue with websocket connection, to not bother trying to send error
-			} else if finalClose.Code != websocket.StatusNormalClosure {
+			} else if desiredClose.Code != websocket.StatusNormalClosure {
 				// We were not about to send a normal closure → send original error
 			} else {
 				// TODO - we were about to send a normal closure → adapt closing to wait error
@@ -145,20 +149,24 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 			// Process finished normally: wait for sender to finish (drain stdout/stderr and send it)
 			logger.Debug("process finished normally, waiting for sender to finish")
 			<-senderChan
-			// TODO - send exit payload
-			// TODO - send closeWith
+			// Adapt returned closing reason
+			if desiredClose == nil {
+				// receiver indicates an issue with websocket connection, to not bother trying to send error
+			} else {
+				// TODO - we were about to send a closure, and the process exited cleanly, let's proceed
+			}
 		}
 		// TODO - wait for sender to finish (drain stdout/stderr)
-	case finalClose = <-senderChan:
+	case desiredClose = <-senderChan:
 		// Sender finished first
-		logger.Debug("sender finished first, something went wrong with process: cancelling receiver context and wait for it to finish",
-			slog.Int("desired_close_code", int(finalClose.Code)),
-			slog.String("desired_close_reason", finalClose.Reason),
+		logger.Debug("sender finished first: cancelling receiver context and wait for it to finish",
+			slog.Int("desired_close_code", int(desiredClose.Code)),
+			slog.String("desired_close_reason", desiredClose.Reason),
 		)
 		receiverContextCancel()
 		<-receiverChan // error will most likely be context canceled, discard it
-		// TODO - send exit payload
-		// TODO - send closeWith
+		// Wait on program state to have its process state
+		// TODO
 	}
 	return // hide following that must be adapted to the new select upper
 	// Wait for the process to finish with a timeout and build exit payload
@@ -211,7 +219,7 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 		}
 	}
 	// Send OoB message if the websocket is still open
-	if finalClose != nil {
+	if desiredClose != nil {
 		if msg, err := exitPayload.WebSocketMessage(); err != nil {
 			logger.Error("failed to marshal server_exited message", slog.Any("error", err))
 		} else if writeErr := wsc.Write(processCtx, websocket.MessageText, msg); writeErr != nil {
@@ -222,7 +230,7 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 		}
 	}
 	// Finaly, close the websocket with the appropriate code
-	if err = wsc.Close(finalClose.Code, finalClose.Reason); err != nil {
+	if err = wsc.Close(desiredClose.Code, desiredClose.Reason); err != nil {
 		logger.Error("failed to close websocket properly", slog.Any("error", err))
 	}
 }
