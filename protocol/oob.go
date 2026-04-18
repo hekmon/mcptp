@@ -1,12 +1,15 @@
 package protocol
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/coder/websocket"
 )
 
 type OoBMessage struct {
-	Type    OoBMessageType  `json:"command"`
+	Type    OoBMessageType  `json:"type"`
 	Payload json.RawMessage `json:"data,omitempty"`
 }
 
@@ -53,7 +56,7 @@ func (m OoBMessage) WebSocketMessagePayload() (payload OoBPayload, err error) {
 }
 
 type OoBPayload interface {
-	WebSocketMessage() (jsonMessage []byte, err error)
+	SendWebSocketMessage(ctx context.Context, wsc *websocket.Conn) (err error)
 }
 
 /*
@@ -68,17 +71,22 @@ type OoBMessageStartOKPayload struct {
 	PID int `json:"pid"`
 }
 
-func (m OoBMessageStartOKPayload) WebSocketMessage() (jsonMessage []byte, err error) {
+func (m OoBMessageStartOKPayload) SendWebSocketMessage(ctx context.Context, wsc *websocket.Conn) (err error) {
 	payload, err := json.Marshal(m)
 	if err != nil {
 		err = fmt.Errorf("failed to marshal payload: %w", err)
 		return
 	}
-	if jsonMessage, err = json.Marshal(OoBMessage{
+	jsonMessage, err := json.Marshal(OoBMessage{
 		Type:    OoBMessageStartOK,
 		Payload: payload,
-	}); err != nil {
+	})
+	if err != nil {
 		err = fmt.Errorf("failed to marshal envelope: %w", err)
+		return
+	}
+	if err = wsc.Write(ctx, websocket.MessageText, jsonMessage); err != nil {
+		err = fmt.Errorf("failed to send message: %w", err)
 		return
 	}
 	return
@@ -96,17 +104,22 @@ type OoBMessageStartErrPayload struct {
 	Error string `json:"error"`
 }
 
-func (m OoBMessageStartErrPayload) WebSocketMessage() (jsonMessage []byte, err error) {
+func (m OoBMessageStartErrPayload) SendWebSocketMessage(ctx context.Context, wsc *websocket.Conn) (err error) {
 	payload, err := json.Marshal(m)
 	if err != nil {
 		err = fmt.Errorf("failed to marshal payload: %w", err)
 		return
 	}
-	if jsonMessage, err = json.Marshal(OoBMessage{
+	jsonMessage, err := json.Marshal(OoBMessage{
 		Type:    OoBMessageStartErr,
 		Payload: payload,
-	}); err != nil {
+	})
+	if err != nil {
 		err = fmt.Errorf("failed to marshal envelope: %w", err)
+		return
+	}
+	if err = wsc.Write(ctx, websocket.MessageText, jsonMessage); err != nil {
+		err = fmt.Errorf("failed to send message: %w", err)
 		return
 	}
 	return
@@ -122,17 +135,22 @@ const (
 
 type OoBMessageShutdownPayload struct{}
 
-func (m OoBMessageShutdownPayload) WebSocketMessage() (jsonMessage []byte, err error) {
+func (m OoBMessageShutdownPayload) SendWebSocketMessage(ctx context.Context, wsc *websocket.Conn) (err error) {
 	payload, err := json.Marshal(m)
 	if err != nil {
 		err = fmt.Errorf("failed to marshal payload: %w", err)
 		return
 	}
-	if jsonMessage, err = json.Marshal(OoBMessage{
+	jsonMessage, err := json.Marshal(OoBMessage{
 		Type:    OoBMessageShutdown,
 		Payload: payload,
-	}); err != nil {
+	})
+	if err != nil {
 		err = fmt.Errorf("failed to marshal envelope: %w", err)
+		return
+	}
+	if err = wsc.Write(ctx, websocket.MessageText, jsonMessage); err != nil {
+		err = fmt.Errorf("failed to send message: %w", err)
 		return
 	}
 	return
@@ -147,21 +165,27 @@ const (
 )
 
 type OoBMessageServerExitedPayload struct {
-	ExitCode *int `json:"exit_code,omitempty"` // Present if exited normally, absent if killed
-	Killed   bool `json:"killed"`              // true = force-killed or system error, false = exited on its own
+	ExitCode *int   `json:"exit_code"` // Present if exited normally, absent if killed or other errors
+	Killed   bool   `json:"killed"`
+	Error    string `json:"error"` // Present if error occurred
 }
 
-func (m OoBMessageServerExitedPayload) WebSocketMessage() (jsonMessage []byte, err error) {
+func (m OoBMessageServerExitedPayload) SendWebSocketMessage(ctx context.Context, wsc *websocket.Conn) (err error) {
 	payload, err := json.Marshal(m)
 	if err != nil {
 		err = fmt.Errorf("failed to marshal payload: %w", err)
 		return
 	}
-	if jsonMessage, err = json.Marshal(OoBMessage{
+	jsonMessage, err := json.Marshal(OoBMessage{
 		Type:    OoBMessageServerExited,
 		Payload: payload,
-	}); err != nil {
+	})
+	if err != nil {
 		err = fmt.Errorf("failed to marshal envelope: %w", err)
+		return
+	}
+	if err = wsc.Write(ctx, websocket.MessageText, jsonMessage); err != nil {
+		err = fmt.Errorf("failed to send message: %w", err)
 		return
 	}
 	return

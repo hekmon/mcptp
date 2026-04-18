@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os/exec"
+	"strings"
 	"sync/atomic"
 
 	"github.com/hekmon/mcproxy/protocol"
@@ -63,7 +64,31 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 	processCtx, processCancel := context.WithCancel(context.Background())
 	defer processCancel()
 
-	// Prepare process
+	// Prepare to close the web socket connection at the end of the function
+	var (
+		err          error
+		desiredClose *websocket.CloseError
+	)
+	defer func() {
+		if desiredClose == nil {
+			// instructed to not close properly the websocket
+			return
+		}
+		if err = wsc.Close(desiredClose.Code, desiredClose.Reason); err != nil {
+			logger.Error("failed to close websocket",
+				slog.Any("error", err),
+				slog.Any("desired_code", desiredClose.Code),
+				slog.String("desired_reason", desiredClose.Reason),
+			)
+		} else {
+			logger.Info("websocket closed properly",
+				slog.Int("close_code", int(desiredClose.Code)),
+				slog.String("close_reason", desiredClose.Reason),
+			)
+		}
+	}()
+
+	// Prepare process execution
 	subProcess := exec.CommandContext(processCtx, mcpServerCmdline[0], mcpServerCmdline[1:]...)
 	var (
 		subProcessStdinWriter  *io.PipeWriter
@@ -75,32 +100,40 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 	subProcessStderrReader, subProcess.Stderr = io.Pipe()
 
 	// Start the process
-	if err := subProcess.Start(); err != nil {
+	if err = subProcess.Start(); err != nil {
 		logger.Error("failed to start process", slog.Any("error", err))
-		// Send error to client
-		msg, err := protocol.OoBMessageStartErrPayload{
+		// Send start error to client
+		err = protocol.OoBMessageStartErrPayload{
 			Error: err.Error(),
-		}.WebSocketMessage()
+		}.SendWebSocketMessage(processCtx, wsc)
 		if err != nil {
-			logger.Error("failed to marshal error message", slog.Any("error", err))
-			return
+			logger.Error("failed to send start error message", slog.Any("error", err))
 		}
-		if err = wsc.Write(processCtx, websocket.MessageText, msg); err != nil {
-			logger.Error("failed to send error message", slog.Any("error", err))
-		}
+		// Close the connection on exit
+		desiredClose = new(websocket.CloseError{
+			Code:   websocket.StatusInternalError,
+			Reason: "process failed to start",
+		})
 		return
 	}
-	msg, err := protocol.OoBMessageStartOKPayload{
+	err = protocol.OoBMessageStartOKPayload{
 		PID: subProcess.Process.Pid,
-	}.WebSocketMessage()
+	}.SendWebSocketMessage(processCtx, wsc)
 	if err != nil {
-		logger.Error("failed to marshal start ok message", slog.Any("error", err))
+		logger.Error("failed to send start ok message",
+			slog.Any("error", err),
+		)
+		// Close the connection on exit
+		desiredClose = new(websocket.CloseError{
+			Code:   websocket.StatusInternalError,
+			Reason: "failed to send start msg",
+		})
 		return
 	}
-	if err = wsc.Write(processCtx, websocket.MessageText, msg); err != nil {
-		logger.Error("failed to send start ok message", slog.Any("error", err))
-		return
-	}
+	logger.Info("process started",
+		slog.String("command", strings.Join(mcpServerCmdline, " ")),
+		slog.Int("pid", subProcess.Process.Pid),
+	)
 
 	// Start the IO workers
 	receiverChan := make(chan *websocket.CloseError, 1)
@@ -116,13 +149,10 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 		senderChan <- sender(processCtx, wsc, subProcessStdoutReader, subProcessStderrReader, logger.With("component", "sender"))
 	}()
 
-	// Wait for either worker to finish first. The first exit determines the root cause:
-	// - receiver first: client initiated shutdown (normal) or websocket issue → use closeWith to close websocket
-	// - sender first: process died unexpectedly → cancel context, wait for receiver to finish (ignore its error)
-	var desiredClose *websocket.CloseError
+	// Wait for either worker to finish first. The first exit determines the cleanup procedure.
 	select {
 	case desiredClose = <-receiverChan:
-		// Receiver finished first → close websocket with its instructions
+		// Receiver finished first, stop process and end websocket connection
 		logger.Debug("receiver finished first: stopping process",
 			slog.Int("desired_close_code", int(desiredClose.Code)),
 			slog.String("desired_close_reason", desiredClose.Reason),
@@ -134,29 +164,69 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 			logger.Error("process did not finish gracefully",
 				slog.Any("error", err),
 			)
-			// Before closing, make sure the sender had time to drain stdout/stderr and sent it (but discard its own errors)
+			// Before closing, make sure the sender had time to drain stdout/stderr and sent them (but discard its own errors if any)
 			logger.Debug("waiting for sender to finish")
 			<-senderChan
+			// Send error to client
+			var (
+				exitErr *exec.ExitError
+				msg     protocol.OoBMessageServerExitedPayload
+			)
+			if errors.As(err, &exitErr) {
+				if exitErr.Exited() {
+					msg.ExitCode = new(exitErr.ExitCode())
+				} else {
+					msg.Killed = true
+				}
+			}
+			msg.Error = err.Error()
+			if err = msg.SendWebSocketMessage(processCtx, wsc); err != nil {
+				logger.Error("failed to send stop error to client",
+					slog.Any("send_error", err),
+					slog.Any("stop_error", msg),
+				)
+			} else {
+				logger.Debug("sent stop error to client",
+					slog.Any("stop_error", msg),
+				)
+			}
 			// Adapt returned closing reason
 			if desiredClose == nil {
-				// receiver indicates an issue with websocket connection, to not bother trying to send error
-			} else if desiredClose.Code != websocket.StatusNormalClosure {
-				// We were not about to send a normal closure → send original error
-			} else {
-				// TODO - we were about to send a normal closure → adapt closing to wait error
+				// receiver indicates an issue with websocket connection, to not bother trying to send error and close properly the websocket
+				return
 			}
-		} else {
-			// Process finished normally: wait for sender to finish (drain stdout/stderr and send it)
-			logger.Debug("process finished normally, waiting for sender to finish")
-			<-senderChan
-			// Adapt returned closing reason
-			if desiredClose == nil {
-				// receiver indicates an issue with websocket connection, to not bother trying to send error
-			} else {
-				// TODO - we were about to send a closure, and the process exited cleanly, let's proceed
+			if desiredClose.Code == websocket.StatusNormalClosure {
+				// We were about to send a normal closure: adapt closing to wait error
+				desiredClose = &websocket.CloseError{
+					Code:   websocket.StatusInternalError,
+					Reason: "process did not finish gracefully",
+				}
+				return
 			}
+			// We were not about to send a normal closure: close with original error instead (desiredClose already set)
+			return
 		}
-		// TODO - wait for sender to finish (drain stdout/stderr)
+		// Process finished normally: wait for sender to finish (drain stdout/stderr and send it)
+		logger.Debug("process finished normally, waiting for sender to finish")
+		<-senderChan
+		// (try to) send exit message
+		msg := protocol.OoBMessageServerExitedPayload{
+			ExitCode: new(0),
+		}
+		if msg.SendWebSocketMessage(processCtx, wsc); err != nil {
+			logger.Error("failed to send process exit message",
+				slog.Int("exit_msg", *msg.ExitCode),
+				slog.Bool("killed", msg.Killed),
+				slog.Any("error", err),
+			)
+		} else {
+			logger.Debug("exit message successfully sent",
+				slog.Int("exit_code", *msg.ExitCode),
+				slog.Bool("killed", msg.Killed),
+			)
+		}
+		// desiredClose already ready for closure (nil or not), we are done
+		return
 	case desiredClose = <-senderChan:
 		// Sender finished first
 		logger.Debug("sender finished first: cancelling receiver context and wait for it to finish",
@@ -167,71 +237,7 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 		<-receiverChan // error will most likely be context canceled, discard it
 		// Wait on program state to have its process state
 		// TODO
-	}
-	return // hide following that must be adapted to the new select upper
-	// Wait for the process to finish with a timeout and build exit payload
-	subProcess.WaitDelay = protocol.SubProcessGracePeriod
-	waitErr := subProcess.Wait()
-	processCancel() // free the other worker, now that process has finished
-	// Build server_exited OoB payload based on exit status
-	var (
-		exitPayload protocol.OoBMessageServerExitedPayload
-		exitErr     *exec.ExitError
-	)
-	switch {
-	case waitErr == nil:
-		// Clean exit - retrieve actual exit code (should be 0, but don't assume)
-		code := subProcess.ProcessState.ExitCode()
-		exitPayload = protocol.OoBMessageServerExitedPayload{
-			ExitCode: &code,
-			Killed:   false,
-		}
-		if code != 0 {
-			logger.Warn("MCP server exited cleanly but with non-zero code",
-				slog.Int("exit_code", code),
-			)
-		} else {
-			logger.Info("MCP server exited cleanly")
-		}
-	case errors.As(waitErr, &exitErr):
-		// Process exited with error - get exit code (works cross-platform)
-		code := exitErr.ExitCode()
-		logger.Warn("MCP server exited with error",
-			slog.Int("exit_code", code),
-		)
-		exitPayload = protocol.OoBMessageServerExitedPayload{
-			ExitCode: &code,
-			Killed:   false,
-		}
-	case errors.Is(waitErr, exec.ErrWaitDelay):
-		// WaitDelay expired - process was force-killed
-		logger.Warn("MCP server did not exit gracefully (killed after timeout)",
-			slog.Duration("grace_period", protocol.SubProcessGracePeriod),
-		)
-		exitPayload = protocol.OoBMessageServerExitedPayload{
-			Killed: true,
-		}
-	default:
-		// Unexpected I/O or system error (no exit code available)
-		logger.Error("MCP server wait failed", slog.Any("error", waitErr))
-		exitPayload = protocol.OoBMessageServerExitedPayload{
-			Killed: true,
-		}
-	}
-	// Send OoB message if the websocket is still open
-	if desiredClose != nil {
-		if msg, err := exitPayload.WebSocketMessage(); err != nil {
-			logger.Error("failed to marshal server_exited message", slog.Any("error", err))
-		} else if writeErr := wsc.Write(processCtx, websocket.MessageText, msg); writeErr != nil {
-			// Websocket might already be closed - don't treat as fatal
-			logger.Error("failed to send server_exited (client may be disconnected)",
-				slog.Any("error", writeErr),
-			)
-		}
-	}
-	// Finaly, close the websocket with the appropriate code
-	if err = wsc.Close(desiredClose.Code, desiredClose.Reason); err != nil {
-		logger.Error("failed to close websocket properly", slog.Any("error", err))
+		return
 	}
 }
 
