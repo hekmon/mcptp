@@ -8,16 +8,18 @@ import (
 	"github.com/coder/websocket"
 )
 
-type OoBMessage struct {
-	Type    OoBMessageType  `json:"type"`
-	Payload json.RawMessage `json:"data,omitempty"`
+type OoBPayload interface {
+	SendWebSocketOoBMessage(ctx context.Context, wsc *websocket.Conn) (err error)
 }
 
-type OoBMessageType string
-
-func (m OoBMessage) WebSocketMessagePayload() (payload OoBPayload, err error) {
+func ReadWebSocketOoBMessage(textMsg []byte) (payload OoBPayload, err error) {
+	var m oobMessage
+	if err = json.Unmarshal(textMsg, &m); err != nil {
+		err = fmt.Errorf("failed to unmarshal message: %w", err)
+		return
+	}
 	switch m.Type {
-	case OoBMessageStartOK:
+	case oobMessageStartOK:
 		var received OoBMessageStartOKPayload
 		if err = json.Unmarshal(m.Payload, &received); err != nil {
 			err = fmt.Errorf("failed to unmarshal payload: %w", err)
@@ -25,7 +27,7 @@ func (m OoBMessage) WebSocketMessagePayload() (payload OoBPayload, err error) {
 		}
 		payload = received
 		return
-	case OoBMessageStartErr:
+	case oobMessageStartErr:
 		var received OoBMessageStartErrPayload
 		if err = json.Unmarshal(m.Payload, &received); err != nil {
 			err = fmt.Errorf("failed to unmarshal payload: %w", err)
@@ -33,7 +35,7 @@ func (m OoBMessage) WebSocketMessagePayload() (payload OoBPayload, err error) {
 		}
 		payload = received
 		return
-	case OoBMessageShutdown:
+	case oobMessageShutdown:
 		var received OoBMessageShutdownPayload
 		if err = json.Unmarshal(m.Payload, &received); err != nil {
 			err = fmt.Errorf("failed to unmarshal payload: %w", err)
@@ -41,7 +43,7 @@ func (m OoBMessage) WebSocketMessagePayload() (payload OoBPayload, err error) {
 		}
 		payload = received
 		return
-	case OoBMessageServerExited:
+	case oobMessageServerExited:
 		var received OoBMessageServerExitedPayload
 		if err = json.Unmarshal(m.Payload, &received); err != nil {
 			err = fmt.Errorf("failed to unmarshal payload: %w", err)
@@ -55,30 +57,33 @@ func (m OoBMessage) WebSocketMessagePayload() (payload OoBPayload, err error) {
 	}
 }
 
-type OoBPayload interface {
-	SendWebSocketMessage(ctx context.Context, wsc *websocket.Conn) (err error)
+type oobMessage struct {
+	Type    oobMessageType  `json:"type"`
+	Payload json.RawMessage `json:"data,omitempty"`
 }
+
+type oobMessageType string
 
 /*
  * Start OK
  */
 
 const (
-	OoBMessageStartOK OoBMessageType = "start_ok" // sent by MCP when it's ready to receive commands
+	oobMessageStartOK oobMessageType = "start_ok" // sent by MCP when it's ready to receive commands
 )
 
 type OoBMessageStartOKPayload struct {
 	PID int `json:"pid"`
 }
 
-func (m OoBMessageStartOKPayload) SendWebSocketMessage(ctx context.Context, wsc *websocket.Conn) (err error) {
+func (m OoBMessageStartOKPayload) SendWebSocketOoBMessage(ctx context.Context, wsc *websocket.Conn) (err error) {
 	payload, err := json.Marshal(m)
 	if err != nil {
 		err = fmt.Errorf("failed to marshal payload: %w", err)
 		return
 	}
-	jsonMessage, err := json.Marshal(OoBMessage{
-		Type:    OoBMessageStartOK,
+	jsonMessage, err := json.Marshal(oobMessage{
+		Type:    oobMessageStartOK,
 		Payload: payload,
 	})
 	if err != nil {
@@ -97,21 +102,21 @@ func (m OoBMessageStartOKPayload) SendWebSocketMessage(ctx context.Context, wsc 
  */
 
 const (
-	OoBMessageStartErr OoBMessageType = "start_err" // sent by MCP when it failed to start
+	oobMessageStartErr oobMessageType = "start_err" // sent by MCP when it failed to start
 )
 
 type OoBMessageStartErrPayload struct {
 	Error string `json:"error"`
 }
 
-func (m OoBMessageStartErrPayload) SendWebSocketMessage(ctx context.Context, wsc *websocket.Conn) (err error) {
+func (m OoBMessageStartErrPayload) SendWebSocketOoBMessage(ctx context.Context, wsc *websocket.Conn) (err error) {
 	payload, err := json.Marshal(m)
 	if err != nil {
 		err = fmt.Errorf("failed to marshal payload: %w", err)
 		return
 	}
-	jsonMessage, err := json.Marshal(OoBMessage{
-		Type:    OoBMessageStartErr,
+	jsonMessage, err := json.Marshal(oobMessage{
+		Type:    oobMessageStartErr,
 		Payload: payload,
 	})
 	if err != nil {
@@ -130,19 +135,19 @@ func (m OoBMessageStartErrPayload) SendWebSocketMessage(ctx context.Context, wsc
  */
 
 const (
-	OoBMessageShutdown OoBMessageType = "shutdown" // sent by client when its parent closed stdin: signal for MCP to stop
+	oobMessageShutdown oobMessageType = "shutdown" // sent by client when its parent closed stdin: signal for MCP to stop
 )
 
 type OoBMessageShutdownPayload struct{}
 
-func (m OoBMessageShutdownPayload) SendWebSocketMessage(ctx context.Context, wsc *websocket.Conn) (err error) {
+func (m OoBMessageShutdownPayload) SendWebSocketOoBMessage(ctx context.Context, wsc *websocket.Conn) (err error) {
 	payload, err := json.Marshal(m)
 	if err != nil {
 		err = fmt.Errorf("failed to marshal payload: %w", err)
 		return
 	}
-	jsonMessage, err := json.Marshal(OoBMessage{
-		Type:    OoBMessageShutdown,
+	jsonMessage, err := json.Marshal(oobMessage{
+		Type:    oobMessageShutdown,
 		Payload: payload,
 	})
 	if err != nil {
@@ -161,7 +166,7 @@ func (m OoBMessageShutdownPayload) SendWebSocketMessage(ctx context.Context, wsc
  */
 
 const (
-	OoBMessageServerExited OoBMessageType = "server_exited" // sent by server when MCP process exits
+	oobMessageServerExited oobMessageType = "server_exited" // sent by server when MCP process exits
 )
 
 type OoBMessageServerExitedPayload struct {
@@ -170,14 +175,14 @@ type OoBMessageServerExitedPayload struct {
 	Error    string `json:"error"` // Present if error occurred
 }
 
-func (m OoBMessageServerExitedPayload) SendWebSocketMessage(ctx context.Context, wsc *websocket.Conn) (err error) {
+func (m OoBMessageServerExitedPayload) SendWebSocketOoBMessage(ctx context.Context, wsc *websocket.Conn) (err error) {
 	payload, err := json.Marshal(m)
 	if err != nil {
 		err = fmt.Errorf("failed to marshal payload: %w", err)
 		return
 	}
-	jsonMessage, err := json.Marshal(OoBMessage{
-		Type:    OoBMessageServerExited,
+	jsonMessage, err := json.Marshal(oobMessage{
+		Type:    oobMessageServerExited,
 		Payload: payload,
 	})
 	if err != nil {

@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -105,7 +104,7 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 		// Send start error to client
 		err = protocol.OoBMessageStartErrPayload{
 			Error: err.Error(),
-		}.SendWebSocketMessage(processCtx, wsc)
+		}.SendWebSocketOoBMessage(processCtx, wsc)
 		if err != nil {
 			logger.Error("failed to send start error message", slog.Any("error", err))
 		}
@@ -118,7 +117,7 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 	}
 	err = protocol.OoBMessageStartOKPayload{
 		PID: subProcess.Process.Pid,
-	}.SendWebSocketMessage(processCtx, wsc)
+	}.SendWebSocketOoBMessage(processCtx, wsc)
 	if err != nil {
 		logger.Error("failed to send start ok message",
 			slog.Any("error", err),
@@ -180,7 +179,7 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 				}
 			}
 			msg.Error = err.Error()
-			if err = msg.SendWebSocketMessage(processCtx, wsc); err != nil {
+			if err = msg.SendWebSocketOoBMessage(processCtx, wsc); err != nil {
 				logger.Error("failed to send stop error to client",
 					slog.Any("send_error", err),
 					slog.Any("stop_error", msg),
@@ -213,7 +212,7 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 		msg := protocol.OoBMessageServerExitedPayload{
 			ExitCode: new(0),
 		}
-		if msg.SendWebSocketMessage(processCtx, wsc); err != nil {
+		if msg.SendWebSocketOoBMessage(processCtx, wsc); err != nil {
 			logger.Error("failed to send process exit message",
 				slog.Int("exit_msg", *msg.ExitCode),
 				slog.Bool("killed", msg.Killed),
@@ -288,17 +287,8 @@ func receiver(ctx context.Context, wsc *websocket.Conn, processStdin io.WriteClo
 				}
 			}
 		case websocket.MessageText:
-			// Unmarshal OoB message
-			var oobMessage protocol.OoBMessage
-			if err = json.Unmarshal(msg, &oobMessage); err != nil {
-				logger.Error("failed to unmarshal OoB message", slog.Any("error", err))
-				return &websocket.CloseError{
-					Code:   websocket.StatusUnsupportedData,
-					Reason: fmt.Sprintf("failed to unmarshal OoB message: %s", err),
-				}
-			}
 			// Handle OoB message
-			oobMsg, err := oobMessage.WebSocketMessagePayload()
+			oobMsg, err := protocol.ReadWebSocketOoBMessage(msg)
 			if err != nil {
 				logger.Error("failed to extract OoB message payload", slog.Any("error", err))
 				return &websocket.CloseError{
@@ -314,17 +304,7 @@ func receiver(ctx context.Context, wsc *websocket.Conn, processStdin io.WriteClo
 					Reason: "shutdown message acknowledged",
 				}
 			default:
-				if oobMessage.Type == "" {
-					logger.Error("unexpected text message received",
-						slog.String("msg", string(msg)),
-					)
-					return &websocket.CloseError{
-						Code:   websocket.StatusUnsupportedData,
-						Reason: "unexpected text message received",
-					}
-				}
-				logger.Warn("unknown OoB message type",
-					slog.String("type", string(oobMessage.Type)),
+				logger.Warn("unknown OoB message",
 					slog.Any("payload", typedMsg),
 				)
 				// continue
