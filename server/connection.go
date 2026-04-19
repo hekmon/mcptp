@@ -141,9 +141,7 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 	receiverChan := make(chan *websocket.CloseError, 1)
 	receiverContext, receiverContextCancel := context.WithCancel(processCtx)
 	defer receiverContextCancel()
-	go func() {
-		receiverChan <- receiver(receiverContext, wsc, subProcessStdinWriter, logger.With("component", "receiver"))
-	}()
+	go receiver(receiverContext, wsc, subProcessStdinWriter, logger.With("component", "receiver"), receiverChan)
 	senderChan := make(chan *websocket.CloseError, 1)
 	// senderContext, senderContextCancel := context.WithCancel(processCtx)
 	// defer senderContextCancel()
@@ -247,7 +245,7 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 // Return value semantics (closeWith):
 //   - *CloseError: caller should close websocket with these codes (instructions for how TO close)
 //   - nil: websocket already closed/dead, no need to close
-func receiver(ctx context.Context, wsc *websocket.Conn, processStdin io.WriteCloser, logger *slog.Logger) (closeWith *websocket.CloseError) {
+func receiver(ctx context.Context, wsc *websocket.Conn, processStdin io.WriteCloser, logger *slog.Logger, returnErr chan<- *websocket.CloseError) {
 	// Signal the subprocess we won't be sending any more data to it after this function returns (MCP signal for clean shutdown)
 	defer processStdin.Close()
 	// Start the read/write loop
@@ -265,17 +263,19 @@ func receiver(ctx context.Context, wsc *websocket.Conn, processStdin io.WriteClo
 			case -1:
 				// Error is not a websocket close error
 				logger.Error("failed to read websocket message", slog.Any("error", err))
-				return &websocket.CloseError{
+				returnErr <- &websocket.CloseError{
 					Code:   websocket.StatusInternalError,
 					Reason: fmt.Sprintf("failed to read websocket message: %s", err),
 				}
+				return
 			default:
 				// Websocket closed
 				logger.Warn("websocket connection closed without OoB shutdown received",
 					slog.Int("status_code", int(statusCode)),
 					slog.String("status_text", statusCode.String()),
 				)
-				return nil // no need to close the websocket, it's already closed
+				returnErr <- nil // no need to close the websocket, it's already closed
+				return
 			}
 		}
 		// Handle the message
@@ -284,28 +284,31 @@ func receiver(ctx context.Context, wsc *websocket.Conn, processStdin io.WriteClo
 			// TODO log JSON-RPC message
 			if _, err = processStdin.Write(msg); err != nil {
 				logger.Error("failed to write to process stdin", slog.Any("error", err))
-				return &websocket.CloseError{
+				returnErr <- &websocket.CloseError{
 					Code:   websocket.StatusInternalError,
 					Reason: fmt.Sprintf("failed to write to process stdin: %s", err),
 				}
+				return
 			}
 		case websocket.MessageText:
 			// Handle OoB message
 			oobMsg, err := protocol.ReadWebSocketOoBMessage(msg)
 			if err != nil {
 				logger.Error("failed to extract OoB message payload", slog.Any("error", err))
-				return &websocket.CloseError{
+				returnErr <- &websocket.CloseError{
 					Code:   websocket.StatusUnsupportedData,
 					Reason: fmt.Sprintf("failed to extract OoB message payload: %s", err),
 				}
+				return
 			}
 			switch typedMsg := oobMsg.(type) {
 			case protocol.OoBMessageShutdownPayload:
 				logger.Info("shutdown message received, closing stdin")
-				return &websocket.CloseError{
+				returnErr <- &websocket.CloseError{
 					Code:   websocket.StatusNormalClosure,
 					Reason: "shutdown message acknowledged",
 				}
+				return
 			default:
 				logger.Warn("unknown OoB message",
 					slog.Any("payload", typedMsg),
@@ -315,16 +318,16 @@ func receiver(ctx context.Context, wsc *websocket.Conn, processStdin io.WriteClo
 		default:
 			// should never happen
 			logger.Error("unexpected websocket message type", slog.Any("type", msgType))
-			return &websocket.CloseError{
+			returnErr <- &websocket.CloseError{
 				Code:   websocket.StatusUnsupportedData,
 				Reason: "unexpected websocket message type",
 			}
+			return
 		}
 	}
 }
 
 func sender(ctx context.Context, wsc *websocket.Conn, processStdout, processStderr *io.PipeReader, logger *slog.Logger) (closeWith *websocket.CloseError) {
-	// TODO
 	stdioChan := make(chan *websocket.CloseError, 1)
 	go sender_stdio(ctx, wsc, processStdout, logger, stdioChan)
 	stderrChan := make(chan *websocket.CloseError, 1)
