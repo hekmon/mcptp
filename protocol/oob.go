@@ -195,3 +195,36 @@ func (m OoBMessageServerExitedPayload) SendWebSocketOoBMessage(ctx context.Conte
 	}
 	return
 }
+
+/*
+ * Process stderr
+ */
+
+const (
+	oobMessageProcessStderr oobMessageType = "process_stderr"
+)
+
+type OoBMessageProcessStderrPayload struct {
+	Line string `json:"line"` // the log line
+}
+
+func (m OoBMessageProcessStderrPayload) SendWebSocketOoBMessage(ctx context.Context, wsc *websocket.Conn) (err error) {
+	payload, err := json.Marshal(m)
+	if err != nil {
+		err = fmt.Errorf("failed to marshal payload: %w", err)
+		return
+	}
+	jsonMessage, err := json.Marshal(oobMessage{
+		Type:    oobMessageProcessStderr,
+		Payload: payload,
+	})
+	if err != nil {
+		err = fmt.Errorf("failed to marshal envelope: %w", err)
+		return
+	}
+	if err = wsc.Write(ctx, websocket.MessageText, jsonMessage); err != nil {
+		err = fmt.Errorf("failed to send message: %w", err)
+		return
+	}
+	return
+}
