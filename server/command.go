@@ -38,6 +38,7 @@ var (
 
 var Command = &cli.Command{
 	Name:        "server",
+	Aliases:     []string{"s"},
 	Usage:       "Act as the proxy server",
 	Description: "It will start as the proxy server and spawn the process at each new connection forwarding the stdin/stdout to the client.",
 	ArgsUsage:   "-- path/to/mcpserver [mcpserver args...]",

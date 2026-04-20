@@ -18,6 +18,7 @@ var (
 
 var Command = &cli.Command{
 	Name:        "client",
+	Aliases:     []string{"c"},
 	Usage:       "Act as the proxy client",
 	ArgsUsage:   fmt.Sprintf("ws(s)://proxy-server-address:%d", server.DefaultPort),
 	Description: "It will connect to the proxy server and forward stdin to it while forwarding back the server's response to stdout. To be launched by your application expecting a stdio MCP server.",

@@ -16,7 +16,7 @@ import (
 func main() {
 	cmd := &cli.Command{
 		Name:    "mcptp",
-		Usage:   "MCP Teleport - A network proxy for stdio only MCP servers",
+		Usage:   "MCP Teleport: A network proxy for stdio only MCP servers",
 		Version: version(),
 		Commands: []*cli.Command{
 			client.Command,
