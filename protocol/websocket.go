@@ -9,5 +9,5 @@ import (
 const (
 	CompressionMode       = websocket.CompressionContextTakeover
 	SubProcessGracePeriod = 5 * time.Second
-	BinaryFrameMaxSize    = 32 * 1024 // 32KB
+	BinaryFrameMaxSize    = 64 * 1024 // 64KB (matches typical kernel pipe buffer)
 )

@@ -160,14 +160,24 @@ For a small self-hosted proxy, standard transport semantics are preferable to in
 
 ### 6.1 Binary channel
 
-Binary WebSocket messages carry MCP traffic.
+Binary WebSocket messages carry MCP stdout data as a transparent stream.
 
-Rule:
+**Framing rule:**
 
-- **1 MCP line = 1 binary WebSocket message**
+- **1 `Read()` from MCP server stdout = 1 binary WebSocket message**
+- Message boundaries do NOT align with MCP line boundaries (`\n`)
 
 MCP stdio messages are JSON-RPC messages sent over stdin/stdout, one message per line, UTF-8 encoded, and stdout must contain only valid protocol messages.
-Using one MCP line per WebSocket binary message preserves natural message boundaries and simplifies inspection and forwarding.
+The proxy does not reassemble or buffer lines - it forwards each `Read()` result immediately as a WebSocket message.
+
+**Rationale:**
+
+- The proxy is transparent: it extends the kernel pipe over the network
+- MCP clients perform their own line-buffering on stdin (e.g., `bufio.Scanner`)
+- If a `Read()` returns incomplete data, the MCP client buffers until `\n`
+- This matches local execution semantics exactly
+- Streaming reduces latency for large outputs (e.g., PDF→markdown conversion)
+- Minimizes proxy memory usage (no buffering of large responses)
 
 ### 6.2 Text channel
 
