@@ -118,7 +118,7 @@ var Command = &cli.Command{
 		// Create the HTTP server
 		httpServer := &http.Server{
 			Addr:    fmt.Sprintf("%s:%d", bindAddress, port),
-			Handler: http.HandlerFunc(incomingConnection),
+			Handler: http.HandlerFunc(handleConnection),
 		}
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			return cli.Exit(fmt.Errorf("failed to run HTTP server: %w", err), 1)

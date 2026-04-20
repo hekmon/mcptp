@@ -23,7 +23,7 @@ var (
 	nbConn  atomic.Int64
 )
 
-func incomingConnection(w http.ResponseWriter, r *http.Request) {
+func handleConnection(w http.ResponseWriter, r *http.Request) {
 	// Create a sub logger with connection ID for this connection
 	logger := logger.With(
 		slog.Int64("connection_id", connIDs.Add(1)),
