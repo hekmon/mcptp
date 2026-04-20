@@ -209,7 +209,6 @@ func proxy(runningCtx context.Context, wsc *websocket.Conn, logger *slog.Logger)
 // It logs the error, sends an error message to the client, and adjusts desiredClose if needed.
 func handleProcessWaitError(ctx context.Context, wsc *websocket.Conn, logger *slog.Logger, err error, desiredClose **websocket.CloseError) {
 	logger.Error("process did not finish gracefully", slog.Any("error", err))
-
 	var (
 		exitErr *exec.ExitError
 		msg     protocol.OoBMessageServerExitedPayload
@@ -222,7 +221,6 @@ func handleProcessWaitError(ctx context.Context, wsc *websocket.Conn, logger *sl
 		}
 	}
 	msg.Error = err.Error()
-
 	if sendErr := msg.SendWebSocketOoBMessage(ctx, wsc); sendErr != nil {
 		logger.Error("failed to send stop error to client",
 			slog.Any("send_error", sendErr),
@@ -233,7 +231,6 @@ func handleProcessWaitError(ctx context.Context, wsc *websocket.Conn, logger *sl
 			slog.Any("stop_error", msg),
 		)
 	}
-
 	// Adapt returned closing reason
 	if *desiredClose == nil {
 		return // websocket issue, don't bother closing properly
