@@ -141,13 +141,11 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 	receiverChan := make(chan *websocket.CloseError, 1)
 	receiverContext, receiverContextCancel := context.WithCancel(processCtx)
 	defer receiverContextCancel()
-	go receiver(receiverContext, wsc, subProcessStdinWriter, logger.With("component", "receiver"), receiverChan)
+	go receiver_stdin(receiverContext, wsc, subProcessStdinWriter, logger.With("component", "receiver"), receiverChan)
 	senderChan := make(chan *websocket.CloseError, 1)
 	// senderContext, senderContextCancel := context.WithCancel(processCtx)
 	// defer senderContextCancel()
-	go func() {
-		senderChan <- sender(processCtx, wsc, subProcessStdoutReader, subProcessStderrReader, logger.With("component", "sender"))
-	}()
+	go sender(processCtx, wsc, subProcessStdoutReader, subProcessStderrReader, logger.With("component", "sender"), senderChan)
 
 	// Wait for either worker to finish first. The first exit determines the cleanup procedure.
 	select {
@@ -245,7 +243,7 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 // Return value semantics (closeWith):
 //   - *CloseError: caller should close websocket with these codes (instructions for how TO close)
 //   - nil: websocket already closed/dead, no need to close
-func receiver(ctx context.Context, wsc *websocket.Conn, processStdin io.WriteCloser, logger *slog.Logger, returnErr chan<- *websocket.CloseError) {
+func receiver_stdin(ctx context.Context, wsc *websocket.Conn, processStdin *io.PipeWriter, logger *slog.Logger, returnErr chan<- *websocket.CloseError) {
 	// Signal the subprocess we won't be sending any more data to it after this function returns (MCP signal for clean shutdown)
 	defer processStdin.Close()
 	// Start the read/write loop
@@ -327,9 +325,13 @@ func receiver(ctx context.Context, wsc *websocket.Conn, processStdin io.WriteClo
 	}
 }
 
-func sender(ctx context.Context, wsc *websocket.Conn, processStdout, processStderr *io.PipeReader, logger *slog.Logger) (closeWith *websocket.CloseError) {
+func sender(ctx context.Context, wsc *websocket.Conn, processStdout, processStderr *io.PipeReader, logger *slog.Logger, returnErr chan<- *websocket.CloseError) {
+	var closeWith *websocket.CloseError
+	defer func() {
+		returnErr <- closeWith
+	}()
 	stdioChan := make(chan *websocket.CloseError, 1)
-	go sender_stdio(ctx, wsc, processStdout, logger, stdioChan)
+	go sender_stdout(ctx, wsc, processStdout, logger, stdioChan)
 	stderrChan := make(chan *websocket.CloseError, 1)
 	go sender_stderr(ctx, wsc, processStderr, logger, stderrChan)
 	var err error
@@ -351,7 +353,7 @@ func sender(ctx context.Context, wsc *websocket.Conn, processStdout, processStde
 	}
 }
 
-func sender_stdio(ctx context.Context, wsc *websocket.Conn, processStdout *io.PipeReader, logger *slog.Logger, returnErr chan<- *websocket.CloseError) {
+func sender_stdout(ctx context.Context, wsc *websocket.Conn, processStdout *io.PipeReader, logger *slog.Logger, returnErr chan<- *websocket.CloseError) {
 	defer processStdout.Close()
 	var (
 		buf       = make([]byte, 32*1024) // 32 KiB buffer for each read
