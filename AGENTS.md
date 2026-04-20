@@ -252,31 +252,6 @@ Debug mode:
 - `forwardServerStderr = true`
 - `logLevel = DEBUG` (includes source tracking)
 
-## 9. JSON-RPC inspection
-
-The proxy may inspect MCP messages for logging, but forwarding must remain transparent.  
-The correct architecture is:
-
-```text
-read raw message -> inspect read-only -> forward raw message
-```
-
-JSON-RPC 2.0 supports requests, notifications, responses, and errors, and notifications do not carry an `id`. 
-Inspection should therefore parse only the envelope:
-
-```go
-type RPCEnvelope struct {
-    JSONRPC string          `json:"jsonrpc"`
-    ID      json.RawMessage `json:"id,omitempty"`
-    Method  string          `json:"method,omitempty"`
-    Params  json.RawMessage `json:"params,omitempty"`
-    Result  json.RawMessage `json:"result,omitempty"`
-    Error   json.RawMessage `json:"error,omitempty"`
-}
-```
-
-This keeps logging robust against protocol evolution while avoiding reserialization risk.
-
 ## 10. Compression
 
 ### 10.1 Mechanism
@@ -453,7 +428,6 @@ For such servers, recommended deployment is:
 - behave exactly like a stdio MCP server,
 - connect to remote over secure WebSocket,
 - forward MCP binary messages,
-- optionally inspect JSON-RPC envelopes,
 - optionally forward remote server stderr to local stderr,
 - never write anything except MCP messages to stdout.
 
@@ -486,7 +460,6 @@ Suggested options:
 - `--client-cert path/to/client.crt` (TLS mode only, for mTLS)
 - `--client-key path/to/client.key` (TLS mode only, for mTLS)
 - `--forward-server-stderr`
-- `--log-jsonrpc`
 
 ### Remote proxy
 
