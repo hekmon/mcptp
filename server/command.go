@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hekmon/mcptp/logging"
+	"github.com/hekmon/mcptp/protocol"
 
 	"github.com/urfave/cli/v3"
 )
@@ -146,10 +147,11 @@ var Command = &cli.Command{
 }
 
 func cleanShutdown(ctx context.Context, httpServer *http.Server) {
+	gracefullPeriod := protocol.SubProcessGracePeriod + time.Second
 	// wait for signal
 	<-ctx.Done()
-	logger.Info("shutting down HTTP server")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	logger.Info("shutting down HTTP server", slog.Duration("grace-period", gracefullPeriod))
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), gracefullPeriod)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		logger.Error("failed to shutdown HTTP server", slog.Any("error", err))
