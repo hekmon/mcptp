@@ -392,7 +392,7 @@ func senderStdout(ctx context.Context, wsc *websocket.Conn, processStdout *io.Pi
 
 func senderStderr(ctx context.Context, wsc *websocket.Conn, processStderr *io.PipeReader, logger *slog.Logger, returnErr chan<- struct{}) {
 	defer func() {
-		returnErr <- nil // Signal exit but don't trigger shutdown (stderr is optional)
+		returnErr <- struct{}{} // Signal exit but don't trigger shutdown (stderr is optional)
 		processStderr.Close()
 	}()
 	var (
