@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"syscall"
 
 	"github.com/hekmon/mcptp/client"
 	"github.com/hekmon/mcptp/server"
@@ -14,6 +16,13 @@ import (
 )
 
 func main() {
+	// Application-wide signal handling
+	ctx, stop := signal.NotifyContext(context.Background(),
+		os.Interrupt,    // Ctrl+C (all platforms)
+		syscall.SIGTERM, // systemd kill (Unix)
+		syscall.SIGQUIT, // debug dump (Unix)
+	)
+	defer stop()
 	cmd := &cli.Command{
 		Name:    "mcptp",
 		Usage:   "MCP Teleport: A network proxy for stdio only MCP servers",
@@ -23,7 +32,7 @@ func main() {
 			server.Command,
 		},
 	}
-	err := cmd.Run(context.Background(), os.Args)
+	err := cmd.Run(ctx, os.Args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

@@ -6,13 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"os/exec"
-	"os/signal"
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/hekmon/mcptp/logging"
@@ -117,12 +114,6 @@ var Command = &cli.Command{
 	Action: func(ctx context.Context, cmd *cli.Command) error {
 		// Prepare
 		logger = logging.CreateLogger(logLevel)
-		runningCtx, stop := signal.NotifyContext(ctx,
-			os.Interrupt,    // Ctrl+C (all platforms)
-			syscall.SIGTERM, // systemd kill (Unix)
-			syscall.SIGQUIT, // debug dump (Unix)
-		)
-		defer stop()
 		// Create the HTTP server
 		logger.Info("starting proxy server",
 			slog.String("listen", fmt.Sprintf("ws://%s:%d", bindAddress, port)),
@@ -132,7 +123,7 @@ var Command = &cli.Command{
 		var requests sync.WaitGroup
 		httpServer := &http.Server{
 			Addr:    fmt.Sprintf("%s:%d", bindAddress, port),
-			Handler: http.HandlerFunc(handleConnection(runningCtx, &requests)),
+			Handler: http.HandlerFunc(handleConnection(ctx, &requests)),
 		}
 		// Prepare for clean shutdown
 		go cleanShutdown(ctx, httpServer)
