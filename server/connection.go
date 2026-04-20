@@ -57,7 +57,7 @@ func incomingConnection(w http.ResponseWriter, r *http.Request) {
 			logger.Error("failed to close websocket", slog.Any("error", err))
 		}
 	}()
-	// once the connection is established, hand over the proxy
+	// once the websocket connection is established, hand over the proxy
 	proxy(wsc, logger)
 }
 
@@ -149,16 +149,16 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 	senderStdoutContext, senderStdoutContextCancel := context.WithCancel(processCtx)
 	defer senderStdoutContextCancel()
 	go senderStdout(senderStdoutContext, wsc, subProcessStdoutReader, logger.With("component", "sender_stdout"), senderStdoutChan)
-	senderStderrChan := make(chan *websocket.CloseError, 1)
+	senderStderrChan := make(chan struct{}, 1)
 	senderStderrContext, senderStderrContextCancel := context.WithCancel(processCtx)
 	defer senderStderrContextCancel()
 	go senderStderr(senderStderrContext, wsc, subProcessStderrReader, logger.With("component", "sender_stderr"), senderStderrChan)
 
-	// Wait for either worker to finish first. The first exit determines the cleanup procedure.
-	var stdoutFirst bool
+	// Wait for either stdin or stdout worker to finish first. The first exit determines the cleanup procedure.
+	// stderr is excluded from this select as it's optional and should not trigger shutdown.
 	select {
 	case desiredClose = <-receiverStdinChan:
-		// Receiver finished first, stop process and end websocket connection
+		// Receiver finished first: stopping process and end websocket connection
 		logger.Debug("receiver finished first: stopping process",
 			slog.Int("desired_close_code", int(desiredClose.Code)),
 			slog.String("desired_close_reason", desiredClose.Reason),
@@ -183,36 +183,24 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 		// desiredClose already ready for closure (nil or not), we are done
 		return
 	case desiredClose = <-senderStdoutChan:
-		stdoutFirst = true
-	case desiredClose = <-senderStderrChan:
-		stdoutFirst = false // useless but consistent
-	}
-	// Common path for stdout/stderr: cancel receiver and drain remaining sender
-	receiverStdinContextCancel()
-	<-receiverStdinChan
-	if stdoutFirst {
+		logger.Debug("stdout sender failed, cancel stdin receiver and drain stderr sender")
+		receiverStdinContextCancel()
+		<-receiverStdinChan
+		// Drain stderr (already exited or just exiting now)
 		<-senderStderrChan
-	} else {
-		<-senderStdoutChan
+		// Wait for process exit and send appropriate message
+		if err = subProcess.Wait(); err != nil {
+			handleProcessWaitError(processCtx, wsc, logger, err, &desiredClose)
+			return
+		}
+		// else program finished gracefully, let's use the original desired close error on return
+		sendNormalExitMessage(processCtx, wsc, logger)
 	}
-	// Wait for process exit and send appropriate message
-	if err = subProcess.Wait(); err != nil {
-		handleProcessWaitError(processCtx, wsc, logger, err, &desiredClose)
-		return
-	}
-	sendNormalExitMessage(processCtx, wsc, logger)
-	// else program finished gracefully, let's use the original desired close error on return
 }
 
 // handleProcessWaitError handles the error path when subProcess.Wait() fails.
 // It logs the error, sends an error message to the client, and adjusts desiredClose if needed.
-func handleProcessWaitError(
-	ctx context.Context,
-	wsc *websocket.Conn,
-	logger *slog.Logger,
-	err error,
-	desiredClose **websocket.CloseError,
-) {
+func handleProcessWaitError(ctx context.Context, wsc *websocket.Conn, logger *slog.Logger, err error, desiredClose **websocket.CloseError) {
 	logger.Error("process did not finish gracefully", slog.Any("error", err))
 
 	var (
@@ -253,11 +241,7 @@ func handleProcessWaitError(
 }
 
 // sendNormalExitMessage sends a normal exit message (exit code 0) to the client.
-func sendNormalExitMessage(
-	ctx context.Context,
-	wsc *websocket.Conn,
-	logger *slog.Logger,
-) {
+func sendNormalExitMessage(ctx context.Context, wsc *websocket.Conn, logger *slog.Logger) {
 	msg := protocol.OoBMessageServerExitedPayload{
 		ExitCode: new(0),
 	}
@@ -406,44 +390,50 @@ func senderStdout(ctx context.Context, wsc *websocket.Conn, processStdout *io.Pi
 	}
 }
 
-func senderStderr(ctx context.Context, wsc *websocket.Conn, processStderr *io.PipeReader, logger *slog.Logger, returnErr chan<- *websocket.CloseError) {
-	defer processStderr.Close()
-	var err error
-	stderrScanner := bufio.NewScanner(processStderr)
-	for stderrScanner.Scan() {
-		line := stderrScanner.Text()
-		logger.Warn("process emitted a stderr line",
-			slog.String("line", line),
-		)
-		err = protocol.OoBMessageProcessStderrPayload{
-			Line: line,
-		}.SendWebSocketOoBMessage(ctx, wsc)
-		if err != nil {
-			logger.Error("failed to send stderr line to client",
-				slog.Any("error", err),
-				slog.String("line", line),
-			)
-			returnErr <- &websocket.CloseError{
-				Code:   websocket.StatusInternalError,
-				Reason: fmt.Sprintf("stderr send error: %s", err),
+func senderStderr(ctx context.Context, wsc *websocket.Conn, processStderr *io.PipeReader, logger *slog.Logger, returnErr chan<- struct{}) {
+	defer func() {
+		returnErr <- nil // Signal exit but don't trigger shutdown (stderr is optional)
+		processStderr.Close()
+	}()
+	var (
+		line, logLine string
+		err, sendErr  error
+	)
+	// Use bufio.Reader instead of Scanner for resilience against long lines
+	stderrReader := bufio.NewReader(processStderr)
+	for {
+		line, err = stderrReader.ReadString('\n')
+		// Process any data we got (even if err != nil)
+		line = strings.TrimSuffix(line, "\n")
+		if len(line) > 0 {
+			if len(line) > 1024 {
+				logLine = line[:1024] + "..."
+			} else {
+				logLine = line
 			}
-			return
+			logger.Info("process emitted a stderr line",
+				slog.String("line", logLine),
+			)
+			sendErr = protocol.OoBMessageProcessStderrPayload{
+				Line: line,
+			}.SendWebSocketOoBMessage(ctx, wsc)
+			if sendErr != nil {
+				logger.Error("failed to send stderr line to client",
+					slog.Any("error", sendErr),
+					slog.String("line", line),
+				)
+				// WebSocket dead, but don't exit - continue reading to avoid blocking process
+			}
 		}
-		logger.Debug("successfully sent stderr line to client",
-			slog.String("line", line),
-		)
-	}
-	if err = stderrScanner.Err(); err != nil {
-		logger.Error("failed to read stderr", slog.Any("error", err))
-		returnErr <- &websocket.CloseError{
-			Code:   websocket.StatusInternalError,
-			Reason: fmt.Sprintf("stderr scan error: %s", err),
+		// Handle EOF - this is the only normal exit condition
+		if err != nil {
+			if err == io.EOF {
+				logger.Debug("stderr EOF received")
+				return
+			}
+			// Other read error - log and continue reading
+			logger.Error("failed to read stderr line", slog.Any("error", err))
+			// Continue to next line
 		}
-		return
-	}
-	logger.Debug("stderr EOF received")
-	returnErr <- &websocket.CloseError{
-		Code:   websocket.StatusNormalClosure,
-		Reason: "stderr EOF",
 	}
 }
