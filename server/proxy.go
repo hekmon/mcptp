@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/hekmon/mcptp/protocol"
@@ -23,47 +24,53 @@ var (
 	nbConn  atomic.Int64
 )
 
-func handleConnection(w http.ResponseWriter, r *http.Request) {
-	// Create a sub logger with connection ID for this connection
-	logger := logger.With(
-		slog.Int64("connection_id", connIDs.Add(1)),
-	)
-	logger.Info("received new connection")
-	// check if we have reached max connections if set
-	totalConnections := nbConn.Add(1)
-	defer nbConn.Add(-1)
-	if maxConnections > 0 && totalConnections > maxConnections {
-		logger.Error("refusing request: too many connections",
-			slog.Int64("total_connections", totalConnections),
-			slog.Int64("max_connections", maxConnections),
+func handleConnection(runningCtx context.Context, inflight *sync.WaitGroup) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		inflight.Add(1)
+		defer inflight.Done()
+		// Create a sub logger with connection ID for this connection
+		logger := logger.With(
+			slog.Int64("connection_id", connIDs.Add(1)),
 		)
-		http.Error(w,
-			fmt.Sprintf("Too many connections: %d > %d\n", totalConnections, maxConnections),
-			http.StatusTooManyRequests,
-		)
-		return
-	}
-	// switch to web socket
-	wsc, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		CompressionMode: protocol.CompressionMode,
-	})
-	if err != nil {
-		logger.Error("failed to initialize websocket", slog.Any("error", err))
-		return
-	}
-	defer func() {
-		// safety net in case the proxy function does not properly close the connection
-		if err = wsc.CloseNow(); err != nil && !errors.Is(err, net.ErrClosed) {
-			logger.Error("failed to close websocket", slog.Any("error", err))
+		logger.Info("received new connection")
+		// check if we have reached max connections if set
+		if maxConnections > 0 {
+			totalConnections := nbConn.Add(1)
+			defer nbConn.Add(-1)
+			if totalConnections > maxConnections {
+				logger.Error("refusing request: too many connections",
+					slog.Int64("total_connections", totalConnections),
+					slog.Int64("max_connections", maxConnections),
+				)
+				http.Error(w,
+					fmt.Sprintf("Too many connections: %d > %d\n", totalConnections, maxConnections),
+					http.StatusTooManyRequests,
+				)
+				return
+			}
 		}
-	}()
-	// once the websocket connection is established, hand over the proxy
-	proxy(wsc, logger)
+		// switch to web socket
+		wsc, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			CompressionMode: protocol.CompressionMode,
+		})
+		if err != nil {
+			logger.Error("failed to initialize websocket", slog.Any("error", err))
+			return
+		}
+		defer func() {
+			// safety net in case the proxy function does not properly close the connection
+			if err = wsc.CloseNow(); err != nil && !errors.Is(err, net.ErrClosed) {
+				logger.Error("failed to close websocket", slog.Any("error", err))
+			}
+		}()
+		// once the websocket connection is established, hand over the proxy
+		proxy(runningCtx, wsc, logger)
+	}
 }
 
-func proxy(wsc *websocket.Conn, logger *slog.Logger) {
+func proxy(runningCtx context.Context, wsc *websocket.Conn, logger *slog.Logger) {
 	// Set a process run global context
-	processCtx, processCancel := context.WithCancel(context.Background())
+	processCtx, processCancel := context.WithCancel(runningCtx)
 	defer processCancel()
 
 	// Prepare to close the web socket connection at the end of the function

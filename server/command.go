@@ -6,9 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"os/exec"
+	"os/signal"
 	"slices"
 	"strings"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/hekmon/mcptp/logging"
 
@@ -108,21 +113,47 @@ var Command = &cli.Command{
 		return ctx, nil
 	},
 	Action: func(ctx context.Context, cmd *cli.Command) error {
-		// Create the logger
+		// Prepare
 		logger = logging.CreateLogger(logLevel)
+		runningCtx, stop := signal.NotifyContext(ctx,
+			os.Interrupt,    // Ctrl+C (all platforms)
+			syscall.SIGTERM, // systemd kill (Unix)
+			syscall.SIGQUIT, // debug dump (Unix)
+		)
+		defer stop()
+		// Create the HTTP server
 		logger.Info("starting proxy server",
 			slog.String("listen", fmt.Sprintf("ws://%s:%d", bindAddress, port)),
 			slog.Int64("max-connections", maxConnections),
 			slog.String("command", strings.Join(mcpServerCmdline, " ")),
 		)
-		// Create the HTTP server
+		var requests sync.WaitGroup
 		httpServer := &http.Server{
 			Addr:    fmt.Sprintf("%s:%d", bindAddress, port),
-			Handler: http.HandlerFunc(handleConnection),
+			Handler: http.HandlerFunc(handleConnection(runningCtx, &requests)),
 		}
+		// Prepare for clean shutdown
+		go cleanShutdown(ctx, httpServer)
+		// Start the HTTP server
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			return cli.Exit(fmt.Errorf("failed to run HTTP server: %w", err), 1)
 		}
+		// Shutdown has been called, but we must wait for all in flight requests to complete
+		logger.Info("waiting for in-flight requests to complete")
+		requests.Wait()
 		return nil
 	},
+}
+
+func cleanShutdown(ctx context.Context, httpServer *http.Server) {
+	// wait for signal
+	<-ctx.Done()
+	logger.Info("shutting down HTTP server")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error("failed to shutdown HTTP server", slog.Any("error", err))
+	} else {
+		logger.Info("HTTP server shutdown complete (not accepting new connections)")
+	}
 }
