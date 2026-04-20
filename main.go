@@ -19,10 +19,11 @@ func main() {
 	// Application-wide signal handling
 	ctx, stop := signal.NotifyContext(context.Background(),
 		os.Interrupt,    // Ctrl+C (all platforms)
-		syscall.SIGTERM, // systemd kill (Unix)
+		syscall.SIGTERM, // systemd stop (Unix)
 		syscall.SIGQUIT, // debug dump (Unix)
 	)
 	defer stop()
+	// Start application
 	cmd := &cli.Command{
 		Name:    "mcptp",
 		Usage:   "MCP Teleport: A network proxy for stdio only MCP servers",
@@ -32,8 +33,7 @@ func main() {
 			server.Command,
 		},
 	}
-	err := cmd.Run(ctx, os.Args)
-	if err != nil {
+	if err := cmd.Run(ctx, os.Args); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
