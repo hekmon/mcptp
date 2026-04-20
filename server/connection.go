@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -52,7 +53,7 @@ func incomingConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		// safety net in case the proxy function does not properly close the connection
-		if err = wsc.CloseNow(); err != nil {
+		if err = wsc.CloseNow(); err != nil && !errors.Is(err, net.ErrClosed) {
 			logger.Error("failed to close websocket", slog.Any("error", err))
 		}
 	}()
@@ -118,6 +119,8 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 		})
 		return
 	}
+	// Set WaitDelay unconditionally so it applies to all shutdown paths
+	subProcess.WaitDelay = protocol.SubProcessGracePeriod
 	err = protocol.OoBMessageStartOKPayload{
 		PID: subProcess.Process.Pid,
 	}.SendWebSocketOoBMessage(processCtx, wsc)
@@ -162,7 +165,6 @@ func proxy(wsc *websocket.Conn, logger *slog.Logger) {
 			slog.Duration("wait_grace_period", subProcess.WaitDelay),
 		)
 		// Stop process first
-		subProcess.WaitDelay = protocol.SubProcessGracePeriod
 		if err = subProcess.Wait(); err != nil {
 			// Drain stdout/stderr senders before handling error, but let them finish (and send potential remaining buffer first)
 			logger.Debug("draining stdout sender before handling error")
