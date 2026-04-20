@@ -87,35 +87,43 @@ Recommended remote shutdown order:
 
 ### 4.4 Worker concurrency model
 
-The remote proxy uses two independent worker goroutines per connection:
+The remote proxy uses **three** independent worker goroutines per connection:
 
-- **receiver**: reads from websocket → writes to process stdin
-- **sender**: reads from process stdout/stderr → writes to websocket
+- **receiver**: reads from websocket → writes to process stdin (fatal: exit triggers shutdown)
+- **sender_stdout**: reads from process stdout → writes to websocket binary (fatal: exit triggers shutdown)
+- **sender_stderr**: reads from process stderr → sends OoB text messages (**non-fatal**: exit does NOT trigger shutdown)
 
 **Synchronization pattern:**
-- Each worker has a `done` channel closed after it finishes
+- Each worker has a `done` channel (buffered, size 1) closed after it finishes
 - Error variables are written *before* their done channel is closed
 - Reading errors after `<-doneChan` is race-free (channel close provides memory barrier)
 
 **Why not errgroup.WithContext()?**
 - `errgroup.WithContext()` cancels the context immediately on first error
-- This would prematurely stop the second worker mid-operation
-- Example: if sender exits (process died), receiver must still be allowed to return cleanly
-- Using `sync.WaitGroup` + channels lets both workers finish naturally
+- This would prematurely stop other workers mid-operation
+- Example: if sender_stdout exits (process died), receiver must still be allowed to return cleanly
+- Using individual contexts + channels lets workers finish naturally
 
 **Error semantics:**
-- First worker to exit = **root cause** (acted upon)
-- Second worker to exit = **collateral damage** (waited for, error ignored)
+- **stdin/stdout workers**: First to exit = **root cause** (acted upon, triggers connection shutdown)
+- **stderr worker**: Exit is **ignored for shutdown decisions** (stderr is optional diagnostics)
 - `receiver` returns `*websocket.CloseError`:
   - Non-nil: caller should close websocket with these codes (instructions for how TO close)
   - Nil: websocket already dead, no Close() needed
+- `sender_stderr` always returns `nil` (never triggers shutdown)
 
 **Shutdown flow:**
-1. Client sends OoB shutdown OR websocket closes
-2. receiver exits, closes process stdin (EOF signal for MCP)
-3. Process exits gracefully (or WaitDelay kills it)
-4. sender exits when stdout/stderr EOF
-5. Both workers finished, connection cleanup complete
+1. Client sends OoB shutdown OR websocket closes OR stdout EOF (process exited)
+2. receiver OR sender_stdout exits first (whichever detects the event)
+3. First exit triggers: cancel receiver context, drain all workers
+4. stderr worker drained (may still be running, exits when process closes stderr)
+5. Process exits gracefully (or WaitDelay kills it)
+6. All workers finished, connection cleanup complete
+
+**stderr worker lifecycle:**
+- Only exits on **EOF** (process closed stderr) or **context cancellation** (after main shutdown)
+- Read errors, send errors, long lines (>1MB) → logged but **continue reading**
+- Never triggers connection shutdown (stderr is optional, non-fatal)
 
 ## 5. Transport choice
 
@@ -214,6 +222,8 @@ Therefore:
 MCP allows stderr to be used for logs and explicitly treats capture/forwarding of stderr as optional behavior for clients.
 This design therefore treats remote server stderr forwarding as a **feature flag**, not a protocol requirement.
 
+**Key design decision:** stderr forwarding is **non-fatal** - errors in stderr handling never kill the MCP connection. The stdin/stdout channel (the actual MCP protocol) continues operating even if stderr forwarding fails.
+
 ## 8. stderr policy
 
 ### 8.1 Remote proxy
@@ -222,6 +232,13 @@ The remote proxy may:
 - capture the server's stderr,
 - log it locally through its own structured logging system,
 - optionally forward it to the local proxy via text WebSocket messages.
+
+**stderr worker resilience:**
+- Uses `bufio.Reader` (not `Scanner`) to handle arbitrarily long lines
+- Lines >1MB are skipped with a warning (prevents log flooding)
+- Read errors, WebSocket send errors → logged but **reading continues**
+- Only exits on **EOF** (process closed stderr) or **context cancellation**
+- **Never triggers connection shutdown** - stderr is diagnostic, not protocol
 
 The remote proxy logs its own operational events using Go's `slog` structured logging package.
 
