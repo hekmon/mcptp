@@ -359,7 +359,7 @@ When using plain WebSocket (`ws://`) over a VPN or trusted network, certificates
 The binary may expose a command like:
 
 ```text
-mcproxy gencerts
+mcptp gencerts
 ```
 
 Expected outputs:
@@ -509,7 +509,7 @@ For plain mode (no TLS), omit the certificate-related options.
 ### Certificate generation (TLS mode only)
 
 Suggested option:
-- `mcproxy gencerts --out ./certs`
+- `mcptp gencerts --out ./certs`
 
 ## 19. Recommended defaults
 

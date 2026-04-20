@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hekmon/mcproxy/logging"
+	"github.com/hekmon/mcptp/logging"
 
 	"github.com/urfave/cli/v3"
 )

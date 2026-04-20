@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/hekmon/mcproxy/server"
+	"github.com/hekmon/mcptp/server"
 
 	"github.com/urfave/cli/v3"
 )

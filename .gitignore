@@ -32,5 +32,5 @@ go.work.sum
 # .vscode/
 
 # Dev
-mcproxy
-mcproxy.exe
+mcptp
+mcptp.exe

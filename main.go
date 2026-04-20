@@ -7,15 +7,15 @@ import (
 	"runtime"
 	"runtime/debug"
 
-	"github.com/hekmon/mcproxy/client"
-	"github.com/hekmon/mcproxy/server"
+	"github.com/hekmon/mcptp/client"
+	"github.com/hekmon/mcptp/server"
 
 	"github.com/urfave/cli/v3"
 )
 
 func main() {
 	cmd := &cli.Command{
-		Name:    "mcproxy",
+		Name:    "mcptp",
 		Usage:   "A network proxy for stdio only MCP servers",
 		Version: version(),
 		Commands: []*cli.Command{

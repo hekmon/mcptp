@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/hekmon/mcproxy/protocol"
+	"github.com/hekmon/mcptp/protocol"
 
 	"github.com/coder/websocket"
 )

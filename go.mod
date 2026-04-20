@@ -1,4 +1,4 @@
-module github.com/hekmon/mcproxy
+module github.com/hekmon/mcptp
 
 go 1.26.0
 
