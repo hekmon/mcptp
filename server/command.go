@@ -104,12 +104,12 @@ var Command = &cli.Command{
 	Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 		// Verify the command to spawn
 		if cmd.Args().Len() == 0 {
-			return ctx, errors.New("no command to spawn on incoming connections")
+			return ctx, cli.Exit(errors.New("no command to spawn on incoming connections"), 1)
 		}
-		var err error
 		mcpServerCmdline = cmd.Args().Slice()
+		var err error
 		if mcpServerCmdline[0], err = exec.LookPath(mcpServerCmdline[0]); err != nil {
-			return ctx, fmt.Errorf("command %q not found: %w", mcpServerCmdline[0], err)
+			return ctx, cli.Exit(fmt.Errorf("command %q not found: %w", mcpServerCmdline[0], err), 1)
 		}
 		return ctx, nil
 	},
@@ -137,7 +137,7 @@ var Command = &cli.Command{
 		go cleanShutdown(ctx, httpServer)
 		// Start the HTTP server
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			return cli.Exit(fmt.Errorf("failed to run HTTP server: %w", err), 1)
+			return cli.Exit(fmt.Errorf("failed to run HTTP server: %w", err), 2)
 		}
 		// Shutdown has been called, but we must wait for all in flight requests to complete
 		logger.Info("waiting for in-flight requests to complete")
