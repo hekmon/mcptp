@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/hekmon/mcptp/logging"
 	"github.com/hekmon/mcptp/protocol"
@@ -128,20 +127,24 @@ var Command = &cli.Command{
 			return cli.Exit(fmt.Errorf("failed to run HTTP server: %w", err), 2)
 		}
 		// Shutdown has been called, but we must wait for all in flight requests to complete
-		logger.Info("waiting for in-flight requests to complete")
+		logger.Info("waiting for in-flight websocket requests to end")
 		requests.Wait()
 		return nil
 	},
 }
 
 func cleanShutdown(ctx context.Context, httpServer *http.Server) {
-	gracefullPeriod := protocol.SubProcessGracePeriod + time.Second
 	// wait for signal
 	<-ctx.Done()
-	logger.Info("shutting down HTTP server", slog.Duration("grace-period", gracefullPeriod))
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), gracefullPeriod)
-	defer cancel()
-	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+	logger.Info("shutdown signal received",
+		slog.Int64("active_connections", nbConn.Load()),
+	)
+	// Use context.Background() without timeout: all connections are hijacked
+	// WebSockets, which are no longer tracked by the HTTP server. Shutdown()
+	// only stops accepting new connections and returns instantly for hijacked
+	// connections. The actual connection cleanup is handled by processCtx
+	// cancellation and requests.Wait() in the Command Action function.
+	if err := httpServer.Shutdown(context.Background()); err != nil {
 		logger.Error("failed to shutdown HTTP server", slog.Any("error", err))
 	} else {
 		logger.Info("HTTP server shutdown complete (not accepting new connections)")
