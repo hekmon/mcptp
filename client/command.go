@@ -45,7 +45,14 @@ var Command = &cli.Command{
 		}
 		// Validate configuration based on the URL scheme
 		switch target.Scheme {
+		case "http":
+			target.Scheme = "ws"
+			fallthrough
 		case "ws":
+			// nothing to do yet
+		case "https":
+			target.Scheme = "wss"
+			fallthrough
 		case "wss":
 			err = errors.New("TLS not yet implemented")
 			return
