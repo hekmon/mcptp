@@ -4,44 +4,105 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
+	"os"
+	"strings"
 
-	"github.com/hekmon/mcptp/server"
+	"github.com/hekmon/mcptp/protocol"
 
+	"github.com/coder/websocket"
 	"github.com/urfave/cli/v3"
 )
 
 var (
-	// Runtime
-	target *url.URL
+	// Configuration
+	target          *url.URL
+	compressionMode websocket.CompressionMode
 )
 
 var Command = &cli.Command{
 	Name:        "client",
 	Aliases:     []string{"c"},
 	Usage:       "Act as the proxy client",
-	ArgsUsage:   fmt.Sprintf("ws(s)://proxy-server-address:%d", server.DefaultPort),
+	ArgsUsage:   fmt.Sprintf("ws(s)://proxy-server-address:%d", protocol.DefaultPort),
 	Description: "It will connect to the proxy server and forward stdin to it while forwarding back the server's response to stdout. To be launched by your application expecting a stdio MCP server.",
 	Flags:       []cli.Flag{},
-	Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+	Before: func(ctx context.Context, cmd *cli.Command) (actionCtx context.Context, err error) {
+		defer func() {
+			if err != nil {
+				err = cli.Exit(err, 1)
+			}
+		}()
 		// Validate the URL
 		if cmd.Args().Len() != 1 {
-			return ctx, fmt.Errorf("expected exactly one argument: the websocket URL")
+			err = errors.New("expected exactly one argument: the websocket URL")
+			return
 		}
-		var err error
 		if target, err = url.Parse(cmd.Args().Get(0)); err != nil {
-			return ctx, fmt.Errorf("invalid URL: %w", err)
+			err = fmt.Errorf("invalid URL: %w", err)
+			return
 		}
+		// Validate configuration based on the URL scheme
 		switch target.Scheme {
 		case "ws":
 		case "wss":
-			return ctx, errors.New("TLS not yet implemented")
+			err = errors.New("TLS not yet implemented")
+			return
 		default:
-			return ctx, fmt.Errorf("invalid URL scheme, expecting 'ws' or 'wss': %s", target.Scheme)
+			err = fmt.Errorf("invalid URL scheme, expecting 'ws' or 'wss': %s", target.Scheme)
+			return
 		}
-		return ctx, nil
+		// Adapt compression mode based on the target host
+		if isLoopbackHost(target.Host) {
+			compressionMode = websocket.CompressionDisabled
+		} else {
+			compressionMode = protocol.CompressionMode
+		}
+		// Ready to start
+		actionCtx = ctx
+		return
 	},
-	Action: func(ctx context.Context, cmd *cli.Command) error {
-		return nil
+	Action: func(ctx context.Context, cmd *cli.Command) (err error) {
+		// Connect to the WebSocket server
+		conn, _, err := websocket.Dial(ctx, target.String(), &websocket.DialOptions{
+			CompressionMode: compressionMode,
+		})
+		if err != nil {
+			return cli.Exit(fmt.Errorf("failed to connect to server: %w", err), 2)
+		}
+		defer func() {
+			// Safety net to ensure the connection is closed if the proxy fails to properly close it
+			if err := conn.CloseNow(); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to close websocket: %v\n", err)
+			}
+		}()
+		// Start proxying
+		if err = proxy(ctx, conn); err != nil {
+			err = cli.Exit(err, 3)
+		}
+		return
 	},
+}
+
+// isLoopbackHost checks if the given host (possibly including port) is a loopback address.
+// Handles IPv4 (127.x.x.x), IPv6 (::1), and hostname (localhost).
+// IPv6 addresses in hostport must be enclosed in square brackets (e.g., "[::1]:80").
+func isLoopbackHost(hostPort string) bool {
+	host, _, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		// No port, use the host as-is
+		host = hostPort
+	}
+	// Check for localhost hostname (no brackets needed)
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	// Strip brackets from IPv6 addresses (e.g., "[::1]" -> "::1")
+	host = strings.Trim(host, "[]")
+	// Parse as IP address and check if loopback
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }

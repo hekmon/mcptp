@@ -18,10 +18,6 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const (
-	DefaultPort = 8623
-)
-
 var (
 	// Config
 	bindAddress    string
@@ -72,7 +68,7 @@ var Command = &cli.Command{
 			Category:         "HTTP server",
 			OnlyOnce:         true,
 			Destination:      &port,
-			Value:            DefaultPort,
+			Value:            protocol.DefaultPort,
 			ValidateDefaults: true,
 			Validator: func(value int) error {
 				if value < 1 {
