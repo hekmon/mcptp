@@ -80,7 +80,7 @@ var Command = &cli.Command{
 		}
 		defer func() {
 			// Safety net to ensure the connection is closed if the proxy fails to properly close it
-			if err := conn.CloseNow(); err != nil {
+			if err := conn.CloseNow(); err != nil && !errors.Is(err, net.ErrClosed) {
 				fmt.Fprintf(os.Stderr, "warning: failed to close websocket: %v\n", err)
 			}
 		}()
@@ -93,17 +93,15 @@ var Command = &cli.Command{
 }
 
 // isLoopbackHost checks if the given host (possibly including port) is a loopback address.
-// Handles IPv4 (127.x.x.x), IPv6 (::1), and hostname (localhost).
+// Handles IPv4 (127.x.x.x), IPv6 (::1), and hostnames (e.g., localhost, myserver.example.com).
 // IPv6 addresses in hostport must be enclosed in square brackets (e.g., "[::1]:80").
+// The host is always resolved (if not already an IP) and ALL resolved IPs must be loopback addresses.
+// This ensures we're absolutely certain before treating a connection as loopback (e.g., to disable compression).
 func isLoopbackHost(hostPort string) bool {
 	host, _, err := net.SplitHostPort(hostPort)
 	if err != nil {
 		// No port, use the host as-is
 		host = hostPort
-	}
-	// Check for localhost hostname (no brackets needed)
-	if strings.EqualFold(host, "localhost") {
-		return true
 	}
 	// Strip brackets from IPv6 addresses (e.g., "[::1]" -> "::1")
 	host = strings.Trim(host, "[]")
@@ -111,5 +109,17 @@ func isLoopbackHost(hostPort string) bool {
 	if ip := net.ParseIP(host); ip != nil {
 		return ip.IsLoopback()
 	}
-	return false
+	// Not a valid IP address, resolve it (handles "localhost" and other DNS names)
+	ips, err := net.LookupHost(host)
+	if err != nil {
+		// DNS resolution failed, assume it's not a loopback address
+		return false
+	}
+	// ALL resolved IPs must be loopback addresses
+	for _, resolvedIP := range ips {
+		if ip := net.ParseIP(resolvedIP); ip == nil || !ip.IsLoopback() {
+			return false
+		}
+	}
+	return true
 }
