@@ -42,7 +42,7 @@ func main() {
 func version() string {
 	infos, ok := debug.ReadBuildInfo()
 	if !ok {
-		return "unknown"
+		return fmt.Sprintf("unknown (%s/%s)", runtime.GOOS, runtime.GOARCH)
 	}
 	return fmt.Sprintf("%s (%s, %s/%s)", infos.Main.Version, infos.GoVersion, runtime.GOOS, runtime.GOARCH)
 }
