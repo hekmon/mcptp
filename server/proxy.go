@@ -444,15 +444,16 @@ func senderStderr(ctx context.Context, wsc *websocket.Conn, processStderr *io.Pi
 				// WebSocket dead, but don't exit - continue reading to avoid blocking process
 			}
 		}
-		// Handle EOF - this is the only normal exit condition
+		// Handle read errors - stderr is optional, so just exit on any error
 		if err != nil {
 			if err == io.EOF {
 				logger.Debug("stderr EOF received")
-				return
+			} else if ctx.Err() != nil {
+				logger.Debug("stderr reader stopped due to context cancellation")
+			} else {
+				logger.Error("failed to read stderr, stopping stderr forwarding", slog.Any("error", err))
 			}
-			// Other read error - log and continue reading
-			logger.Error("failed to read stderr line", slog.Any("error", err))
-			// Continue to next line
+			return
 		}
 	}
 }
