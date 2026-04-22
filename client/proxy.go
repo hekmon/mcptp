@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/hekmon/mcptp/protocol"
 
@@ -54,9 +55,28 @@ func proxy(ctx context.Context, conn *websocket.Conn) (err error) {
 		senderStdoutContextCancel()
 		<-senderStdoutChan
 	case exitErr = <-senderStdoutChan:
-		// Sender finished first: cancel receiver and wait for it
+		// Sender finished first (e.g., Ctrl+C pressed, websocket closed).
+		// Cancel receiver context and wait for it to finish.
+		//
+		// IMPORTANT: On Windows/WSL terminals, stdin.Read() is not interruptible.
+		// Even after context cancellation, the receiver goroutine may remain
+		// blocked on stdin.Read() indefinitely. This is a platform limitation:
+		// console handles on Windows do not support async cancellation.
+		//
+		// We use a timeout to avoid hanging forever. If the receiver doesn't
+		// finish within 100ms, we exit anyway. The stuck goroutine will be
+		// cleaned up when the process exits - this is safe because:
+		// 1. The process is terminating anyway
+		// 2. The goroutine holds no external resources (just stack memory)
+		// 3. The OS reclaims all process resources on exit
 		receiverStdinContextCancel()
-		<-receiverStdinChan
+		select {
+		case <-receiverStdinChan:
+			// Receiver finished in time (normal case on Unix, or when not blocked on read)
+		case <-time.After(100 * time.Millisecond):
+			// Receiver didn't finish - it's stuck on stdin.Read().
+			// Exit anyway; the goroutine will be cleaned up by the OS.
+		}
 	}
 	return exitErr
 }
@@ -64,11 +84,6 @@ func proxy(ctx context.Context, conn *websocket.Conn) (err error) {
 // receiver reads from stdin and writes to websocket.
 // Sends shutdown OoB message when stdin closes.
 func receiverStdin(ctx context.Context, conn *websocket.Conn, stdin *os.File, returnErr chan<- cli.ExitCoder) {
-	go func() {
-		// Avoid blocking on stdin.Read() when context is cancelled
-		<-ctx.Done()
-		stdin.Close()
-	}()
 	var (
 		buf     = make([]byte, protocol.BinaryFrameMaxSize)
 		n       int
@@ -90,8 +105,7 @@ func receiverStdin(ctx context.Context, conn *websocket.Conn, stdin *os.File, re
 					returnErr <- cli.Exit(fmt.Errorf("failed to send shutdown message: %w", sendErr), 1)
 					return
 				}
-				// do not return just yet to avoid triggering an error based stop
-				// instead wait for the sender to finish and cancel us
+				// Wait for sender to finish (it will receive server_exited or connection close)
 				<-ctx.Done()
 				returnErr <- cli.Exit(ctx.Err(), 1) // still returning an error just in case (but in that path, it should be discarded)
 				return
