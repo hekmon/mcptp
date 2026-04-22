@@ -51,6 +51,14 @@ func ReadWebSocketOoBMessage(textMsg []byte) (payload OoBPayload, err error) {
 		}
 		payload = received
 		return
+	case oobMessageProcessStderr:
+		var received OoBMessageProcessStderrPayload
+		if err = json.Unmarshal(m.Payload, &received); err != nil {
+			err = fmt.Errorf("failed to unmarshal payload: %w", err)
+			return
+		}
+		payload = received
+		return
 	default:
 		err = fmt.Errorf("unknown message type: %s", m.Type)
 		return
