@@ -228,10 +228,10 @@ This design therefore treats remote server stderr forwarding as a **feature flag
 
 ### 8.1 Remote proxy
 
-The remote proxy may:
-- capture the server's stderr,
-- log it locally through its own structured logging system,
-- optionally forward it to the local proxy via text WebSocket messages.
+The remote proxy:
+- captures the server's stderr,
+- logs it locally through its own structured logging system,
+- forwards it to the local proxy via text WebSocket messages.
 
 **stderr worker resilience:**
 - Uses `bufio.Reader` (not `Scanner`) to handle arbitrarily long lines
@@ -259,21 +259,11 @@ The remote proxy may also log operational events independently of the spawned MC
 
 ### 8.2 Local proxy
 
-The local proxy writes its own operational logs to local stderr, and optionally re-emits remote server stderr to local stderr.
+The local proxy writes its own operational logs to local stderr, and re-emits remote server stderr to local stderr.
 
 **Forwarded server stderr** is prefixed with `[SERVER]` to distinguish it from local proxy output.
 
 **Local proxy output** (operational messages, lifecycle notifications, errors) is written without prefixes, as it originates from the local process itself and is inherently distinguishable from forwarded remote server output.
-
-### 8.3 Default
-
-Default:
-- `forwardServerStderr = false`
-- `logLevel = INFO`
-
-Debug mode:
-- `forwardServerStderr = true`
-- `logLevel = DEBUG` (includes source tracking)
 
 ## 10. Compression
 
@@ -451,7 +441,7 @@ For such servers, recommended deployment is:
 - behave exactly like a stdio MCP server,
 - connect to remote over secure WebSocket,
 - forward MCP binary messages,
-- optionally forward remote server stderr to local stderr,
+- forward remote server stderr to local stderr,
 - never write anything except MCP messages to stdout.
 
 ### 17.2 Remote proxy responsibilities
@@ -460,7 +450,7 @@ For such servers, recommended deployment is:
 - spawn the real MCP server,
 - wire stdin/stdout/stderr,
 - forward MCP binary messages,
-- optionally forward stderr via text channel,
+- forward stderr via text channel,
 - kill/clean up the process on disconnect,
 - enforce concurrency limits.
 
@@ -482,7 +472,6 @@ Suggested options:
 - `--ca path/to/ca.crt` (TLS mode only)
 - `--client-cert path/to/client.crt` (TLS mode only, for mTLS)
 - `--client-key path/to/client.key` (TLS mode only, for mTLS)
-- `--forward-server-stderr`
 
 ### Remote proxy
 
@@ -494,7 +483,6 @@ Suggested options:
 - `--server-cert path/to/server.crt` (TLS mode only)
 - `--server-key path/to/server.key` (TLS mode only)
 - `--max-connections N`
-- `--forward-server-stderr`
 - `--ping-interval 15s`
 - `--pong-timeout 30s`
 - `--server /path/to/mcp-server`
@@ -518,7 +506,7 @@ For this project, the recommended defaults are:
 - compression: `permessage-deflate`
 - compression mode: context takeover
 - MCP framing: one line per binary message
-- stderr forwarding: disabled by default
+- stderr forwarding: enabled
 - JSON-RPC inspection: enabled optionally, read-only
 - max connections: unlimited by default, configurable to `1`
 - overload behavior: reject
