@@ -1,4 +1,4 @@
-package logging
+package server
 
 import (
 	"log/slog"
@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	DefaultLevel = slog.LevelInfo
+	DefaultLogLevel = slog.LevelInfo
 )
 
 func GetLogLevels() []string {
@@ -37,11 +37,11 @@ func CreateLogger(requestedLogLevel string) (logger *slog.Logger) {
 	case slog.LevelError.String():
 		opts.Level = slog.LevelError
 	default:
-		opts.Level = DefaultLevel
+		opts.Level = DefaultLogLevel
 		defer func() {
 			logger.Warn("log level not set or invalid: setting default level",
 				slog.String("requested_level", requestedLogLevel),
-				slog.String("default_level", DefaultLevel.String()),
+				slog.String("default_level", DefaultLogLevel.String()),
 			)
 		}()
 	}

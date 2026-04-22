@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hekmon/mcptp/logging"
 	"github.com/hekmon/mcptp/protocol"
 
 	"github.com/urfave/cli/v3"
@@ -37,14 +36,14 @@ var Command = &cli.Command{
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:             "log-level",
-			Usage:            fmt.Sprintf("Set the logging level. Valid values: %s", strings.Join(logging.GetLogLevels(), ", ")),
+			Usage:            fmt.Sprintf("Set the logging level. Valid values: %s", strings.Join(GetLogLevels(), ", ")),
 			Aliases:          []string{"l"},
 			OnlyOnce:         true,
-			Value:            logging.DefaultLevel.String(),
+			Value:            DefaultLogLevel.String(),
 			Destination:      &logLevel,
 			ValidateDefaults: true,
 			Validator: func(value string) error {
-				if !slices.Contains(logging.GetLogLevels(), strings.ToUpper(value)) {
+				if !slices.Contains(GetLogLevels(), strings.ToUpper(value)) {
 					return fmt.Errorf("invalid log level: %q", value)
 				}
 				return nil
@@ -108,7 +107,7 @@ var Command = &cli.Command{
 	},
 	Action: func(ctx context.Context, cmd *cli.Command) error {
 		// Prepare
-		logger = logging.CreateLogger(logLevel)
+		logger = CreateLogger(logLevel)
 		// Create the HTTP server
 		logger.Info("starting proxy server",
 			slog.String("listen", fmt.Sprintf("ws://%s:%d", bindAddress, port)),
