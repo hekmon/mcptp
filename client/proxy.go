@@ -120,15 +120,21 @@ func receiverStdin(ctx context.Context, conn *websocket.Conn, stdin *os.File, re
 // Handles OoB messages (stderr, server_exited).
 func senderStdout(ctx context.Context, conn *websocket.Conn, stdout io.Writer, returnErr chan<- cli.ExitCoder) {
 	var (
-		msgType websocket.MessageType
-		msg     []byte
-		err     error
+		msgType  websocket.MessageType
+		msg      []byte
+		err      error
+		exitCode int
+		exitInfo string
 	)
 	conn.SetReadLimit(protocol.BinaryFrameMaxSize)
 	for {
 		if msgType, msg, err = conn.Read(ctx); err != nil {
 			if ce, ok := errors.AsType[websocket.CloseError](err); ok {
-				returnErr <- cli.Exit(fmt.Errorf("websocket unexpectedly closed with status %d (%s)", ce.Code, ce.Reason), 1)
+				if ce.Code == websocket.StatusNormalClosure {
+					returnErr <- cli.Exit(fmt.Errorf("websocket closed with status %d (%s): %s", ce.Code, ce.Reason, exitInfo), exitCode)
+				} else {
+					returnErr <- cli.Exit(fmt.Errorf("websocket unexpectedly closed with status %d (%s): %s", ce.Code, ce.Reason, exitInfo), 1)
+				}
 				return
 			}
 			returnErr <- cli.Exit(fmt.Errorf("websocket read error: %v", err), 1)
@@ -153,10 +159,6 @@ func senderStdout(ctx context.Context, conn *websocket.Conn, stdout io.Writer, r
 				fmt.Fprintf(os.Stderr, "[SERVER] %s\n", typedMsg.Line)
 			case protocol.OoBMessageServerExitedPayload:
 				// Server process exited: forward to local stderr and close
-				var (
-					exitInfo string
-					exitCode int
-				)
 				if typedMsg.ExitCode != nil {
 					exitInfo = fmt.Sprintf("exit code %d", *typedMsg.ExitCode)
 					exitCode = *typedMsg.ExitCode
@@ -172,8 +174,7 @@ func senderStdout(ctx context.Context, conn *websocket.Conn, stdout io.Writer, r
 				} else {
 					exitInfo = fmt.Sprintf("process exited (%s)", exitInfo)
 				}
-				returnErr <- cli.Exit(exitInfo, exitCode)
-				return
+				// continue to catch the server closure that will follow this message
 			case protocol.OoBMessageShutdownPayload:
 				// Should never happen - shutdown is client-to-server only
 				fmt.Fprintf(os.Stderr, "warning: protocol violation - received shutdown message from server\n")
