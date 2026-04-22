@@ -259,15 +259,11 @@ The remote proxy may also log operational events independently of the spawned MC
 
 ### 8.2 Local proxy
 
-The local proxy uses the same structured logging infrastructure as the remote proxy:
-- writes its own operational logs to local stderr,
-- optionally re-emit remote server stderr to local stderr.
+The local proxy writes its own operational logs to local stderr, and optionally re-emits remote server stderr to local stderr.
 
-Because clients that launch stdio-based servers commonly display stderr as plain text logs rather than parse it as protocol data, mixing local proxy logs and forwarded remote server stderr on local stderr is acceptable as long as the source is clearly prefixed.
+**Forwarded server stderr** is prefixed with `[SERVER]` to distinguish it from local proxy output.
 
-Recommended prefixes for forwarded stderr:
-- `[PROXY]` for local proxy operational messages
-- `[SERVER]` for forwarded remote server stderr
+**Local proxy output** (operational messages, lifecycle notifications, errors) is written without prefixes, as it originates from the local process itself and is inherently distinguishable from forwarded remote server output.
 
 ### 8.3 Default
 
