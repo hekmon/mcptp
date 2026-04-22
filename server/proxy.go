@@ -173,6 +173,7 @@ func proxy(runningCtx context.Context, wsc *websocket.Conn, logger *slog.Logger)
 		)
 		// Stop process first
 		if err = subProcess.Wait(); err != nil {
+			logger.Error("error while waiting for process to finish", slog.Any("error", err))
 			// Drain stdout/stderr senders before handling error, but let them finish (and send potential remaining buffer first)
 			logger.Debug("draining stdout sender before handling error")
 			senderStdoutContextCancel()
@@ -183,6 +184,7 @@ func proxy(runningCtx context.Context, wsc *websocket.Conn, logger *slog.Logger)
 			handleProcessWaitError(processCtx, wsc, logger, err, &desiredClose)
 			return
 		}
+		logger.Info("process finished normally")
 		// Process finished normally: drain stdout/stderr senders and send exit message
 		logger.Debug("draining stdout sender after normal process exit")
 		senderStdoutContextCancel()
@@ -202,9 +204,11 @@ func proxy(runningCtx context.Context, wsc *websocket.Conn, logger *slog.Logger)
 		<-senderStderrChan
 		// Wait for process exit and send appropriate message
 		if err = subProcess.Wait(); err != nil {
+			logger.Error("error while waiting for process to finish", slog.Any("error", err))
 			handleProcessWaitError(processCtx, wsc, logger, err, &desiredClose)
 			return
 		}
+		logger.Info("process finished normally")
 		// else program finished gracefully, let's use the original desired close error on return
 		sendNormalExitMessage(processCtx, wsc, logger)
 	}
