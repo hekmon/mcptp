@@ -280,6 +280,7 @@ func receiverStdin(ctx context.Context, wsc *websocket.Conn, processStdin *io.Pi
 		msgType websocket.MessageType
 		msg     []byte
 		err     error
+		n       int
 	)
 	wsc.SetReadLimit(protocol.BinaryFrameMaxSize)
 	for {
@@ -308,7 +309,7 @@ func receiverStdin(ctx context.Context, wsc *websocket.Conn, processStdin *io.Pi
 		// Handle the message
 		switch msgType {
 		case websocket.MessageBinary:
-			if _, err = processStdin.Write(msg); err != nil {
+			if n, err = processStdin.Write(msg); err != nil {
 				logger.Error("failed to write to process stdin", slog.Any("error", err))
 				returnErr <- &websocket.CloseError{
 					Code:   websocket.StatusInternalError,
@@ -316,6 +317,9 @@ func receiverStdin(ctx context.Context, wsc *websocket.Conn, processStdin *io.Pi
 				}
 				return
 			}
+			logger.Debug("wrote stdin from websocket to process",
+				slog.Int("bytes", n),
+			)
 		case websocket.MessageText:
 			// Handle OoB message
 			oobMsg, err := protocol.ReadWebSocketOoBMessage(msg)
