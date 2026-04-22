@@ -175,16 +175,20 @@ func proxy(runningCtx context.Context, wsc *websocket.Conn, logger *slog.Logger)
 		if err = subProcess.Wait(); err != nil {
 			// Drain stdout/stderr senders before handling error, but let them finish (and send potential remaining buffer first)
 			logger.Debug("draining stdout sender before handling error")
+			senderStdoutContextCancel()
 			<-senderStdoutChan
 			logger.Debug("draining stderr sender before handling error")
+			senderStderrContextCancel()
 			<-senderStderrChan
 			handleProcessWaitError(processCtx, wsc, logger, err, &desiredClose)
 			return
 		}
 		// Process finished normally: drain stdout/stderr senders and send exit message
 		logger.Debug("draining stdout sender after normal process exit")
+		senderStdoutContextCancel()
 		<-senderStdoutChan
 		logger.Debug("draining stderr sender after normal process exit")
+		senderStderrContextCancel()
 		<-senderStderrChan
 		sendNormalExitMessage(processCtx, wsc, logger)
 		// desiredClose already ready for closure (nil or not), we are done
@@ -194,6 +198,7 @@ func proxy(runningCtx context.Context, wsc *websocket.Conn, logger *slog.Logger)
 		receiverStdinContextCancel()
 		<-receiverStdinChan
 		// Drain stderr (already exited or just exiting now)
+		senderStderrContextCancel()
 		<-senderStderrChan
 		// Wait for process exit and send appropriate message
 		if err = subProcess.Wait(); err != nil {
@@ -349,6 +354,11 @@ func receiverStdin(ctx context.Context, wsc *websocket.Conn, processStdin *io.Pi
 }
 
 func senderStdout(ctx context.Context, wsc *websocket.Conn, processStdout *io.PipeReader, logger *slog.Logger, returnErr chan<- *websocket.CloseError) {
+	// Avoid blocking on processStdout.Read() when context is cancelled
+	go func() {
+		<-ctx.Done()
+		processStdout.Close()
+	}()
 	defer processStdout.Close()
 	var (
 		buf       = make([]byte, protocol.BinaryFrameMaxSize)
@@ -395,6 +405,11 @@ func senderStdout(ctx context.Context, wsc *websocket.Conn, processStdout *io.Pi
 }
 
 func senderStderr(ctx context.Context, wsc *websocket.Conn, processStderr *io.PipeReader, logger *slog.Logger, returnErr chan<- struct{}) {
+	// Avoid blocking on processStderr.Read() when context is cancelled
+	go func() {
+		<-ctx.Done()
+		processStderr.Close()
+	}()
 	defer func() {
 		returnErr <- struct{}{} // Signal exit but don't trigger shutdown (stderr is optional)
 		processStderr.Close()
