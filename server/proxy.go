@@ -390,11 +390,27 @@ func senderStdout(ctx context.Context, wsc *websocket.Conn, processStdout *io.Pi
 			)
 		}
 		if err != nil {
+			// Note on EOF vs io.ErrClosedPipe:
+			// - io.EOF: occurs when the process closes stdout (write end) and we read
+			//   all remaining data before the read end is closed. This is rare in
+			//   normal shutdown because we cancel the context (closing the read end)
+			//   immediately after Wait() returns.
+			// - io.ErrClosedPipe: occurs when the read end is closed (by our context
+			//   cancellation helper) while Read() is blocked. This is the common
+			//   case during normal shutdown: process exits → Wait() returns → we
+			//   cancel context → read end closes → Read() returns ErrClosedPipe.
 			if err == io.EOF {
 				logger.Debug("stdout EOF received")
 				returnErr <- &websocket.CloseError{
 					Code:   websocket.StatusNormalClosure,
 					Reason: "stdout EOF",
+				}
+			} else if errors.Is(err, io.ErrClosedPipe) {
+				// Expected during normal shutdown - read end closed by context cancellation
+				logger.Debug("stdout pipe closed (expected during shutdown)")
+				returnErr <- &websocket.CloseError{
+					Code:   websocket.StatusNormalClosure,
+					Reason: "stdout pipe closed",
 				}
 			} else {
 				logger.Error("failed to read stdout", slog.Any("error", err))
