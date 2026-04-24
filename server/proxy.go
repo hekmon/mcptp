@@ -340,7 +340,7 @@ func receiverStdin(ctx context.Context, wsc *websocket.Conn, processStdin *io.Pi
 				if request.ID != nil {
 					args = append(args, slog.Any("id", request.ID))
 				}
-				logger.Info("JSON/RPC v2 request", args...)
+				logger.Info("JSON/RPC v2 request", slog.Group("jsonrpcv2", args...))
 			}
 		case websocket.MessageText:
 			// Handle OoB message
@@ -427,7 +427,7 @@ func senderStdout(ctx context.Context, wsc *websocket.Conn, processStdout *io.Pi
 				if response.ID != nil {
 					args = append(args, slog.Any("id", response.ID))
 				}
-				logger.Info("JSON/RPC v2 response", args...)
+				logger.Info("JSON/RPC v2 response", slog.Group("jsonrpcv2", args...))
 			}
 		}
 		if err != nil {
