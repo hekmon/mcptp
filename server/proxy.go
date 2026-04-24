@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 
 	"github.com/hekmon/mcptp/protocol"
+	"github.com/hekmon/mcptp/protocol/jsonrpcv2"
 
 	"github.com/coder/websocket"
 )
@@ -279,6 +280,11 @@ func sendNormalExitMessage(ctx context.Context, wsc *websocket.Conn, logger *slo
 func receiverStdin(ctx context.Context, wsc *websocket.Conn, processStdin *io.PipeWriter, logger *slog.Logger, returnErr chan<- *websocket.CloseError) {
 	// Signal the subprocess we won't be sending any more data to it after this function returns (MCP signal for clean shutdown)
 	defer processStdin.Close()
+	// Prepare for parsing the JSON RPC requests
+	var (
+		accumulator jsonrpcv2.Accumulator
+		request     *jsonrpcv2.Request
+	)
 	// Start the read/write loop
 	var (
 		msgType websocket.MessageType
@@ -324,6 +330,18 @@ func receiverStdin(ctx context.Context, wsc *websocket.Conn, processStdin *io.Pi
 			logger.Debug("wrote stdin from websocket to process",
 				slog.Int("bytes", n),
 			)
+			// Try to read a command line from the buffer
+			if request, err = accumulator.AccumulateRequest(msg); err != nil {
+				logger.Error("failed to accumulate JSON/RPC v2 request", slog.Any("error", err))
+			} else if request != nil {
+				args := make([]any, 2, 3)
+				args[0] = slog.String("method", request.Method)
+				args[1] = slog.Int("params_length", len(request.Params))
+				if request.ID != nil {
+					args = append(args, slog.Any("id", request.ID))
+				}
+				logger.Info("JSON/RPC v2 request", args...)
+			}
 		case websocket.MessageText:
 			// Handle OoB message
 			oobMsg, err := protocol.ReadWebSocketOoBMessage(msg)
@@ -368,6 +386,11 @@ func senderStdout(ctx context.Context, wsc *websocket.Conn, processStdout *io.Pi
 		processStdout.Close()
 	}()
 	defer processStdout.Close()
+	// Prepare for parsing JSON-RPC responses
+	var (
+		accumulator jsonrpcv2.Accumulator
+		response    *jsonrpcv2.Response
+	)
 	var (
 		buf       = make([]byte, protocol.BinaryFrameMaxSize)
 		n         int
@@ -392,6 +415,20 @@ func senderStdout(ctx context.Context, wsc *websocket.Conn, processStdout *io.Pi
 			logger.Debug("sent stdout read to websocket",
 				slog.Int("bytes", n),
 			)
+			// Try to accumulate a response from the buffer
+			if response, err = accumulator.AccumulateResponse(buf[:n]); err != nil {
+				logger.Error("failed to accumulate JSON/RPC v2 response", slog.Any("error", err))
+			} else if response != nil {
+				args := make([]any, 1, 3)
+				args[0] = slog.Int("result_length", len(response.Result))
+				if response.Error != nil {
+					args = append(args, slog.Any("error", *response.Error))
+				}
+				if response.ID != nil {
+					args = append(args, slog.Any("id", response.ID))
+				}
+				logger.Info("JSON/RPC v2 response", args...)
+			}
 		}
 		if err != nil {
 			// Note on EOF vs io.ErrClosedPipe:
