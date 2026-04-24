@@ -90,7 +90,11 @@ Recommended remote shutdown order:
 The remote proxy uses **three** independent worker goroutines per connection:
 
 - **receiver**: reads from websocket → writes to process stdin (fatal: exit triggers shutdown)
+  - Also accumulates and logs complete JSON-RPC requests from the binary stream
+  - Logs: method name, params length, request ID (if present)
 - **sender_stdout**: reads from process stdout → writes to websocket binary (fatal: exit triggers shutdown)
+  - Also accumulates and logs complete JSON-RPC responses from the binary stream
+  - Logs: response ID, is_error flag
 - **sender_stderr**: reads from process stderr → sends OoB text messages (**non-fatal**: exit does NOT trigger shutdown)
 
 **Synchronization pattern:**
@@ -176,16 +180,28 @@ Binary WebSocket messages carry MCP stdout data as a transparent stream.
 - Message boundaries do NOT align with MCP line boundaries (`\n`)
 
 MCP stdio messages are JSON-RPC messages sent over stdin/stdout, one message per line, UTF-8 encoded, and stdout must contain only valid protocol messages.
-The proxy does not reassemble or buffer lines - it forwards each `Read()` result immediately as a WebSocket message.
+The proxy forwards each `Read()` result immediately as a WebSocket message without modification.
+
+**Transparent forwarding:**
+
+- Binary data is forwarded byte-for-byte without inspection
+- No latency is added to the MCP protocol stream
+- The proxy does not block on message parsing
+
+**Observation layer:**
+
+While forwarding is transparent, the proxy also maintains internal line buffers for **observability only**:
+- Complete JSON-RPC messages are accumulated from the binary stream
+- Each complete message is logged with structured fields (method, ID, etc.)
+- Extra complete lines are discarded to maintain protocol synchronization
+- This observation is read-only and does not interfere with forwarding
 
 **Rationale:**
 
-- The proxy is transparent: it extends the kernel pipe over the network
-- MCP clients perform their own line-buffering on stdin (e.g., `bufio.Scanner`)
-- If a `Read()` returns incomplete data, the MCP client buffers until `\n`
-- This matches local execution semantics exactly
-- Streaming reduces latency for large outputs (e.g., PDF→markdown conversion)
-- Minimizes proxy memory usage (no buffering of large responses)
+- The proxy extends the kernel pipe over the network (forwarding)
+- Line accumulation provides operational visibility (logging)
+- Separation of concerns: forwarding is critical, logging is best-effort
+- MCP clients still perform their own line-buffering on stdin
 
 ### 6.2 Text channel
 
