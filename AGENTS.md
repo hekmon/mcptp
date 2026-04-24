@@ -196,6 +196,15 @@ While forwarding is transparent, the proxy also maintains internal line buffers 
 - Extra complete lines are discarded to maintain protocol synchronization
 - This observation is read-only and does not interfere with forwarding
 
+**Parsing scope:**
+
+The proxy's JSON-RPC understanding is intentionally minimal:
+- Only extracts metadata: method name, request/response ID, error flag
+- Does NOT validate full message semantics per the JSON-RPC specification
+- Does NOT validate parameter types, return types, or method-specific semantics
+- Does NOT reject or modify messages based on validation failures
+- Invalid messages are logged as-is and forwarded unchanged
+
 **Rationale:**
 
 - The proxy extends the kernel pipe over the network (forwarding)

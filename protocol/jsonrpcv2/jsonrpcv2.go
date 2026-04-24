@@ -1,3 +1,10 @@
+// Package jsonrpcv2 provides minimal types for reading JSON-RPC 2.0 messages on the wire.
+// Generated from the JSON-RPC 2.0 specification (jsonrpcv2.md), this package includes only
+// the types and validation logic needed to parse and log messages for observability purposes.
+// It is NOT a full JSON-RPC client/server implementation - it does not handle method dispatch,
+// parameter validation, or response generation. The types exist solely to enable structured
+// logging of request/response metadata (method names, IDs, error flags) without inspecting
+// or modifying the actual message payloads.
 package jsonrpcv2
 
 import (
