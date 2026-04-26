@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/hekmon/mcptp/client"
+	"github.com/hekmon/mcptp/mtls"
 	"github.com/hekmon/mcptp/server"
 
 	"github.com/urfave/cli/v3"
@@ -31,6 +32,7 @@ func main() {
 		Commands: []*cli.Command{
 			client.Command,
 			server.Command,
+			mtls.Command,
 		},
 	}
 	if err := cmd.Run(ctx, os.Args); err != nil {
