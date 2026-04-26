@@ -50,11 +50,16 @@ var Command = &cli.Command{
 		}
 
 		// Write everything to disk
+		outDir := cmd.String("output")
+		if err = os.MkdirAll(outDir, 0755); err != nil {
+			err = fmt.Errorf("failed to create output directory %q: %w", outDir, err)
+			return
+		}
 		fmt.Println("mTLS certificates successfully generated:")
 		var path string
 		{
 			// CA certificate
-			if path, err = writeCertificate(cmd.String("output"), "ca", caDER); err != nil {
+			if path, err = writeCertificate(outDir, "ca", caDER); err != nil {
 				err = fmt.Errorf("failed to write CA certificate: %w", err)
 				return
 			}
@@ -63,13 +68,13 @@ var Command = &cli.Command{
 		}
 		{
 			// Server certificate
-			if path, err = writeCertificate(cmd.String("output"), "server", serverDER); err != nil {
+			if path, err = writeCertificate(outDir, "server", serverDER); err != nil {
 				err = fmt.Errorf("failed to write server certificate: %w", err)
 				return
 			}
 			fmt.Printf("\tServer certificate: %s\n", path)
 			// Server private key
-			if path, err = writePrivateKey(cmd.String("output"), "server", serverPriv); err != nil {
+			if path, err = writePrivateKey(outDir, "server", serverPriv); err != nil {
 				err = fmt.Errorf("failed to write server private key: %w", err)
 				return
 			}
@@ -77,13 +82,13 @@ var Command = &cli.Command{
 		}
 		{
 			// Client certificate
-			if path, err = writeCertificate(cmd.String("output"), "client", clientDER); err != nil {
+			if path, err = writeCertificate(outDir, "client", clientDER); err != nil {
 				err = fmt.Errorf("failed to write client certificate: %w", err)
 				return
 			}
 			fmt.Printf("\tClient certificate: %s\n", path)
 			// Client private key
-			if path, err = writePrivateKey(cmd.String("output"), "client", clientPriv); err != nil {
+			if path, err = writePrivateKey(outDir, "client", clientPriv); err != nil {
 				err = fmt.Errorf("failed to write client private key: %w", err)
 				return
 			}
