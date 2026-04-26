@@ -348,6 +348,12 @@ Certificates use X.509 Extended Key Usage:
 
 This prevents a leaked client certificate from being reused as a fake server certificate in a MITM scenario, and vice versa, assuming both sides enforce role checks.
 
+**Authentication Model:**
+- Client authenticates server based on: (1) valid CA signature, (2) presence of `serverAuth` EKU
+- Server authenticates client based on: (1) valid CA signature, (2) presence of `clientAuth` EKU
+- **Hostname/IP verification is NOT part of the security model** — certificates do not require Subject Alternative Names (SAN)
+- Trust is established through CA chain validation and EKU role separation, not endpoint identity
+
 ### 12.3 Simple PKI model
 
 To keep the system simple for personal use:
@@ -361,6 +367,13 @@ Consequences:
 - rotation is achieved by generating a new complete bundle,
 - users are responsible for protecting their private keys,
 - if compromise is suspected, regenerate and redistribute everything.
+
+**Security Implications:**
+- Since the CA private key exists only in memory during generation and is never written to disk:
+  - no intermediate CA certificates can be created after the generation command completes,
+  - `MaxPathLen` constraint is optional (defense-in-depth only),
+  - certificate chain validation at runtime is unnecessary if generation is tested.
+- The closed trust bundle means: only certificates generated in the same run are mutually trusted.
 
 This is intentional and appropriate for a non-commercial self-hosted tool.
 
@@ -385,6 +398,18 @@ Expected outputs:
 Explicitly **not** written:
 - `ca.key`
 
+**Certificate Properties:**
+- CA certificate: `IsCA=true`, `KeyUsage=CertSign`, no SAN required
+- Server certificate: `serverAuth` EKU, no SAN required (hostname verification disabled in TLS config)
+- Client certificate: `clientAuth` EKU, no SAN required
+- All certificates: Ed25519 keys (or equivalent modern algorithm)
+- Validity period: ~10 years (rotation is manual bundle regeneration)
+
+**Revocation:**
+- No CRL or OCSP infrastructure
+- Compromise response: regenerate entire bundle and redistribute
+- `KeyUsage=CRLSign` on CA is optional (not needed for this revocation model)
+
 This creates a closed trust bundle:
 - only the generated client and server certs are valid,
 - no later certificates can be signed from the same CA because the CA private key no longer exists,
@@ -397,14 +422,15 @@ Because EKU is an extension rather than a primitive transport field, role checki
 ### 14.1 Client side
 
 The client verifies:
-- server chain validity,
-- hostname/SAN validity,
+- server chain validity (signed by trusted CA),
 - presence of `serverAuth` EKU.
+
+**Note:** Hostname/SAN verification is explicitly **disabled** — authentication is based on CA signature + EKU, not endpoint identity.
 
 ### 14.2 Server side
 
 The server verifies:
-- client chain validity,
+- client chain validity (signed by trusted CA),
 - presence of `clientAuth` EKU.
 
 If using Go's verification hooks, verified chains are represented as `[][]*x509.Certificate`, where:
@@ -415,8 +441,25 @@ If using Go's verification hooks, verified chains are represented as `[][]*x509.
 So role checks typically inspect:
 
 ```go
-cert := verifiedChains
+cert := verifiedChains[0][0]
 ```
+
+### 14.3 TLS Configuration Requirements
+
+**Client-Side TLS Configuration:**
+- Set `RootCAs` to the generated CA certificate
+- Set `ClientAuthCert` to the generated client certificate/key pair
+- Set `ServerName` to empty string OR set `InsecureSkipVerify=true` (hostname verification disabled by design)
+
+**Server-Side TLS Configuration:**
+- Set `ClientCAs` to the generated CA certificate
+- Set `ClientAuth` to `RequireAndVerifyClientCert`
+- Set `Certificates` to the generated server certificate/key pair
+- No hostname verification on client certificates
+
+**EKU Verification:**
+- Go's `crypto/tls` automatically validates EKU when `ClientAuth` is set
+- Implementations should verify this behavior in tests
 
 ## 15. Concurrency model
 
@@ -528,6 +571,9 @@ For this project, the recommended defaults are:
 - authentication: mTLS when using TLS, none required for plain mode
 - cert generation: one-shot CA/server/client bundle (TLS mode only)
 - CA key persistence: disabled
+- hostname verification: **disabled** (authentication via CA+EKU, not endpoint identity)
+- SAN on certificates: **not required**
+- certificate rotation: regenerate full bundle and redistribute
 - compression: `permessage-deflate`
 - compression mode: context takeover
 - MCP framing: one line per binary message
@@ -541,3 +587,12 @@ For this project, the recommended defaults are:
 
 This proxy is intentionally a thin remote-exec bridge for MCP stdio, not a session broker, not a shared multi-user backend, and not a full PKI product.  
 Its purpose is to preserve the local client mental model while moving the actual MCP server execution to a remote machine. TLS/mTLS provides secure transport over untrusted networks, but can be disabled when running over VPNs or trusted tunnels for simpler deployment.
+
+**The mTLS implementation prioritizes simplicity over flexibility:**
+- closed trust bundle (no external CAs, no intermediate CAs),
+- no hostname-based authentication (CA signature + EKU only),
+- no revocation infrastructure (full rotation on compromise),
+- ephemeral CA key (cannot issue new certs after generation).
+
+**This is appropriate for:** single developers, small teams, personal servers, self-hosted deployments.  
+**This is NOT appropriate for:** multi-tenant systems, enterprise PKI requirements, certificate-based access control at scale.
