@@ -34,3 +34,8 @@ go.work.sum
 # Dev
 mcptp
 mcptp.exe
+ca.crt
+server.crt
+server.key
+client.crt
+client.key
