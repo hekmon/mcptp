@@ -1,6 +1,6 @@
 # MCP Teleport (mcptp)
 
-**MCP Teleport** is a secure network proxy that lets you run Model Context Protocol (MCP) servers remotely while maintaining the experience of running them locally. Your MCP client connects to a local proxy, which securely forwards all communication to the actual MCP server running on a remote machine.
+**MCP Teleport** is a secure network proxy that lets you run stdio only Model Context Protocol (MCP) servers remotely while maintaining the experience of running them locally. Your MCP client connects to a local proxy, which securely forwards all communication to the actual MCP server running on a remote machine.
 
 ## Why Use MCP Teleport?
 
