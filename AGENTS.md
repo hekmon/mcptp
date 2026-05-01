@@ -313,6 +313,17 @@ Reason:
 
 `CompressionNoContextTakeover` is acceptable if memory usage per connection becomes a concern, but it is not the preferred default for this project.
 
+### 10.4 Loopback optimization
+
+The client automatically detects loopback addresses and disables compression for localhost connections:
+
+- **Loopback detected** (`127.0.0.1`, `::1`, `localhost`): Compression is **disabled**
+  - Rationale: No bandwidth savings needed for local traffic, avoids unnecessary CPU overhead
+- **Remote connections**: Compression is **enabled** with context takeover
+  - Rationale: Reduces bandwidth usage over network links
+
+This optimization is automatic and requires no user configuration. The client performs DNS resolution when needed to determine if a hostname resolves to loopback addresses.
+
 ## 11. Keepalive and dead peer detection
 
 WebSocket ping/pong is used to detect dead peers and remote crashes.

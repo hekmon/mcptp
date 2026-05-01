@@ -129,6 +129,15 @@ This simplifies deployment for personal servers where you control both ends.
 - **Key Size**: 256-bit Ed25519
 - **TLS Version**: TLS 1.3 only
 
+### Automatic Compression
+
+WebSocket compression is automatically managed based on the connection type:
+
+- **Localhost connections** (`127.0.0.1`, `::1`, `localhost`): Compression is **disabled** (no overhead needed for local traffic)
+- **Remote connections**: Compression is **enabled** (reduces bandwidth usage over network)
+
+You don't need to configure this manually—the client automatically detects loopback addresses and optimizes accordingly.
+
 ## Configuration
 
 ### Client Command
