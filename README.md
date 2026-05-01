@@ -177,7 +177,7 @@ Options:
   --output, -o   Output directory for certificates (default: current directory)
 ```
 
-## Example: Running GitHub MCP Server Remotely
+## Example: Running a Time/Date MCP Server Remotely
 
 **Remote Machine:**
 ```bash
@@ -189,7 +189,7 @@ mcptp server --bind 0.0.0.0 --port 7777 \
   --cert ~/mcptp-certs/server.crt \
   --key ~/mcptp-certs/server.key \
   --ca ~/mcptp-certs/ca.crt \
-  -- npx -y @modelcontextprotocol/server-github
+  -- uvx mcp-server-time
 ```
 
 **Local Machine:**
@@ -201,11 +201,11 @@ mcptp client wss://my-server.example.com:7777 \
   --ca ~/mcptp-certs/ca.crt
 ```
 
-**MCP Client Configuration** (example for an IDE):
+**MCP Client Configuration:**
 ```json
 {
   "mcpServers": {
-    "github": {
+    "time": {
       "command": "mcptp",
       "args": ["client", "--cert", "...", "--key", "...", "--ca", "...", "wss://my-server.example.com:7777"]
     }
