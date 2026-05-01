@@ -220,11 +220,20 @@ OPTIONS:
 
 ### Certificate Generation
 
-```bash
-mcptp mTLS [options]
+```
+$ ./mcptp mTLS -h
+NAME:
+   mcptp mTLS - Create certificates needed for mTLS (mutual TLS)
 
-Options:
-  --output, -o   Output directory for certificates (default: current directory)
+USAGE:
+   mcptp mTLS [options]
+
+DESCRIPTION:
+   Generates a complete mTLS certificate bundle for secure client-server authentication (wss://) over untrusted networks. This command creates a self-contained PKI with: a CA certificate (ca.crt), server certificate and key (server.crt, server.key) with serverAuth EKU, and client certificate and key (client.crt, client.key) with clientAuth EKU. The CA private key is NOT persisted, ensuring no additional certificates can be issued later. To rotate certificates, regenerate the entire bundle. For trusted networks or VPNs, plain WebSocket (ws://) without TLS is acceptable.
+
+OPTIONS:
+   --output string, -o string  Output directory for certificates (default: current directory) (default: ".")
+   --help, -h                  show help
 ```
 
 ## Example: Running a Time/Date MCP Server Remotely
