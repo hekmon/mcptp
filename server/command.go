@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os/exec"
 	"slices"
@@ -158,15 +159,25 @@ var Command = &cli.Command{
 		)
 		var requests sync.WaitGroup
 		httpServer := &http.Server{
-			Addr:      fmt.Sprintf("%s:%d", bindAddress, port),
-			Handler:   http.HandlerFunc(handleConnection(ctx, &requests)),
-			TLSConfig: tlsConf,
+			Addr:    fmt.Sprintf("%s:%d", bindAddress, port),
+			Handler: http.HandlerFunc(handleConnection(ctx, &requests)),
 		}
 		// Prepare for clean shutdown
 		go cleanShutdown(ctx, httpServer)
 		// Start the HTTP server
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			return cli.Exit(fmt.Errorf("failed to run HTTP server: %w", err), 2)
+		if tlsConf != nil {
+			// We manually created the TLS config and parsed certificates, we won't be using the high level ListenAndServeTLS()
+			ln, err := net.Listen("tcp", httpServer.Addr)
+			if err != nil {
+				return err
+			}
+			if err = httpServer.Serve(tls.NewListener(ln, tlsConf)); err != nil && err != http.ErrServerClosed {
+				return cli.Exit(fmt.Errorf("failed to run HTTPS server: %w", err), 2)
+			}
+		} else {
+			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				return cli.Exit(fmt.Errorf("failed to run HTTP server: %w", err), 2)
+			}
 		}
 		// Shutdown has been called, but we must wait for all in flight requests to complete
 		logger.Info("waiting for in-flight websocket requests to end")
