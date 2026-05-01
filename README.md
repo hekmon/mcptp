@@ -141,6 +141,16 @@ WebSocket compression is automatically managed based on the connection type:
 
 You don't need to configure this manually—the client automatically detects loopback addresses and optimizes accordingly.
 
+### Stderr Forwarding
+
+The remote MCP server's stderr is automatically captured and forwarded to your local machine:
+
+- **Remote server logs**: All stderr output from the MCP server appears on your local stderr
+- **Prefixed output**: Forwarded stderr is prefixed with `[SERVER]` to distinguish it from local proxy messages
+- **Non-fatal**: Stderr forwarding errors never interrupt the MCP connection (stderr is diagnostic, not protocol)
+
+This helps with debugging and monitoring the remote server's operational logs.
+
 ## Configuration
 
 ```
