@@ -2,7 +2,8 @@ package protocol
 
 import (
 	"crypto"
-	"crypto/ed25519"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -29,9 +30,9 @@ const (
 // GenerateCA creates a new CA private key and self-signed certificate
 func GenerateCA(refTime time.Time) (caDER []byte, caPriv crypto.PrivateKey, err error) {
 	// Generate CA key
-	caPub, caPriv, err := ed25519.GenerateKey(rand.Reader)
+	ca, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		err = fmt.Errorf("failed to generate an Ed25519 key: %w", err)
+		err = fmt.Errorf("failed to generate an ECDSA P-256 key: %w", err)
 		return
 	}
 	// Create CA self-signed Certificat
@@ -49,10 +50,12 @@ func GenerateCA(refTime time.Time) (caDER []byte, caPriv crypto.PrivateKey, err 
 		MaxPathLen:            0,    // explicitly no intermediate CAs
 		MaxPathLenZero:        true, // required, otherwise Go treats MaxPathLen:0 as "unset"
 	}
-	if caDER, err = x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, caPub, caPriv); err != nil {
+	if caDER, err = x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, ca.Public(), caPriv); err != nil {
 		err = fmt.Errorf("failed to create CA certificate: %w", err)
 		return
 	}
+	// Return CA private key as crypto.PrivateKey
+	caPriv = ca
 	return
 }
 
@@ -64,9 +67,9 @@ func GenerateServer(refTime time.Time, caDER []byte, caPriv crypto.PrivateKey) (
 		return
 	}
 	// Generate server key
-	serverPub, serverPriv, err := ed25519.GenerateKey(rand.Reader)
+	server, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		err = fmt.Errorf("failed to generate an Ed25519 key: %w", err)
+		err = fmt.Errorf("failed to generate an ECDSA P-256 key: %w", err)
 		return
 	}
 	// Create server certificate
@@ -82,10 +85,12 @@ func GenerateServer(refTime time.Time, caDER []byte, caPriv crypto.PrivateKey) (
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
-	if serverDER, err = x509.CreateCertificate(rand.Reader, serverTmpl, caCert, serverPub, caPriv); err != nil {
+	if serverDER, err = x509.CreateCertificate(rand.Reader, serverTmpl, caCert, server.Public(), caPriv); err != nil {
 		err = fmt.Errorf("failed to create server certificate: %w", err)
 		return
 	}
+	// Return server private key as crypto.PrivateKey
+	serverPriv = server
 	return
 }
 
@@ -97,9 +102,9 @@ func GenerateClient(refTime time.Time, caDER []byte, caPriv crypto.PrivateKey) (
 		return
 	}
 	// Generate client key
-	clientPub, clientPriv, err := ed25519.GenerateKey(rand.Reader)
+	client, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		err = fmt.Errorf("failed to generate an Ed25519 key: %w", err)
+		err = fmt.Errorf("failed to generate an ECDSA P-256 key: %w", err)
 		return
 	}
 	// Create client certificate
@@ -115,10 +120,12 @@ func GenerateClient(refTime time.Time, caDER []byte, caPriv crypto.PrivateKey) (
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
-	if clientDER, err = x509.CreateCertificate(rand.Reader, clientTmpl, caCert, clientPub, caPriv); err != nil {
+	if clientDER, err = x509.CreateCertificate(rand.Reader, clientTmpl, caCert, client.Public(), caPriv); err != nil {
 		err = fmt.Errorf("failed to create client certificate: %w", err)
 		return
 	}
+	// Return client private key as crypto.PrivateKey
+	clientPriv = client
 	return
 }
 
