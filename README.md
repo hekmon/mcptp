@@ -260,9 +260,9 @@ mcptp server --bind 127.0.0.1 --port 7777 -- /path/to/linux-only-mcp-server
 
 **If using NAT mode** (default WSL1/WSL2 without mirrored networking):
 
-First, find the WSL IP address:
+First, find the WSL IP address (run this on Windows):
 ```powershell
-# Run in PowerShell
+# Runs 'hostname -I' inside WSL and returns the result
 wsl hostname -I
 ```
 
