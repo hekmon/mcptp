@@ -371,8 +371,12 @@ Consequences:
 **Security Implications:**
 - Since the CA private key exists only in memory during generation and is never written to disk:
   - no intermediate CA certificates can be created after the generation command completes,
-  - `MaxPathLen` constraint is optional (defense-in-depth only),
+  - `MaxPathLen=0` SHOULD be set on the CA certificate as defense-in-depth (explicitly prevents any intermediate CA certificates, even if code is modified later),
   - certificate chain validation at runtime is unnecessary if generation is tested.
+- CA `KeyUsage` is `KeyUsageCertSign` exclusively:
+  - `KeyUsageDigitalSignature` is NOT needed on the CA because it never authenticates itself in a TLS handshake
+  - `KeyUsageCertSign` governs certificate signing; `KeyUsageDigitalSignature` governs TLS authentication — these are orthogonal bits
+  - Go's `x509.CreateCertificate` only checks `KeyUsageCertSign` on the signer, not `KeyUsageDigitalSignature`
 - The closed trust bundle means: only certificates generated in the same run are mutually trusted.
 
 This is intentional and appropriate for a non-commercial self-hosted tool.
@@ -399,16 +403,31 @@ Explicitly **not** written:
 - `ca.key`
 
 **Certificate Properties:**
-- CA certificate: `IsCA=true`, `KeyUsage=CertSign`, no SAN required
-- Server certificate: `serverAuth` EKU, no SAN required (hostname verification disabled in TLS config)
-- Client certificate: `clientAuth` EKU, no SAN required
+- CA certificate:
+  - `IsCA=true`
+  - `BasicConstraintsValid=true`
+  - `KeyUsage=x509.KeyUsageCertSign` (exclusively for signing certificates; `KeyUsageDigitalSignature` is NOT needed because the CA never authenticates itself in TLS)
+  - `MaxPathLen=0` (RECOMMENDED as defense-in-depth to explicitly prevent any intermediate CA certificates, even though the CA key is ephemeral)
+  - no SAN required
+- Server certificate:
+  - `IsCA=false` (default, explicit setting optional)
+  - `BasicConstraintsValid=true`
+  - `KeyUsage=x509.KeyUsageDigitalSignature` (sufficient for TLS 1.3; `KeyUsageKeyEncipherment` and `KeyUsageKeyAgreement` are NOT needed because TLS 1.3 uses ECDHE for key exchange, independent of the certificate algorithm)
+  - `ExtKeyUsage=[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}`
+  - no SAN required (hostname verification disabled by design)
+- Client certificate:
+  - `IsCA=false` (default, explicit setting optional)
+  - `BasicConstraintsValid=true`
+  - `KeyUsage=x509.KeyUsageDigitalSignature` (sufficient for TLS 1.3; same rationale as server certificate)
+  - `ExtKeyUsage=[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}`
+  - no SAN required
 - All certificates: Ed25519 keys (or equivalent modern algorithm)
 - Validity period: ~10 years (rotation is manual bundle regeneration)
 
 **Revocation:**
 - No CRL or OCSP infrastructure
 - Compromise response: regenerate entire bundle and redistribute
-- `KeyUsage=CRLSign` on CA is optional (not needed for this revocation model)
+- `KeyUsage=CRLSign` on CA is NOT needed (no revocation infrastructure exists; this is by design)
 
 This creates a closed trust bundle:
 - only the generated client and server certs are valid,
@@ -450,6 +469,7 @@ cert := verifiedChains[0][0]
 - Set `RootCAs` to the generated CA certificate
 - Set `ClientAuthCert` to the generated client certificate/key pair
 - Set `ServerName` to empty string OR set `InsecureSkipVerify=true` (hostname verification disabled by design)
+- Use custom `VerifyConnection` callback to verify server certificate with CA+EKU checks while bypassing hostname verification
 
 **Server-Side TLS Configuration:**
 - Set `ClientCAs` to the generated CA certificate
@@ -458,8 +478,48 @@ cert := verifiedChains[0][0]
 - No hostname verification on client certificates
 
 **EKU Verification:**
-- Go's `crypto/tls` automatically validates EKU when `ClientAuth` is set
+- Go's `crypto/tls` automatically validates EKU when `ClientAuth` is set to `RequireAndVerifyClientCert`
+- The server-side config relies on this automatic verification
+- The client-side config uses a custom `VerifyConnection` callback because `InsecureSkipVerify=true` disables all automatic verification
 - Implementations should verify this behavior in tests
+
+### 14.4 Certificate Verification Behavior
+
+**Load-time verification:**
+- `tls.LoadX509KeyPair()` populates the `Leaf` field with the parsed leaf certificate
+- This enables pre-verification of certificate chains at application startup (fail-fast on misconfiguration)
+- Use `certificate.Leaf.Verify()` with appropriate `VerifyOptions` to validate:
+  - Chain validity (signed by trusted CA in `Roots` pool)
+  - EKU role (via `KeyUsages` field)
+  - Expiry (`NotBefore`/`NotAfter` are checked automatically by `Verify()` unless `CurrentTime` is explicitly set)
+
+**Handshake-time verification:**
+- Go's TLS stack automatically verifies peer certificates during the handshake
+- `x509.Verify()` performs the following checks by default:
+  - Certificate chain validity (signed by trusted root/intermediate)
+  - Expiry (current time within `NotBefore`/`NotAfter` window)
+  - EKU compatibility (when `KeyUsages` is specified)
+  - Basic constraints (CA flag, path length)
+- Hostname verification is NOT performed when `InsecureSkipVerify=true` or when using custom `VerifyConnection`
+
+### 14.5 TLS 1.3 Specifics
+
+This project requires TLS 1.3 (`MinVersion: tls.VersionTLS13`). Key implications:
+
+**Key exchange:**
+- TLS 1.3 always uses ECDHE for key exchange, independent of the certificate algorithm
+- Certificate KeyUsage does NOT need `KeyUsageKeyEncipherment` or `KeyUsageKeyAgreement`
+- `KeyUsageDigitalSignature` is sufficient for server and client certificates
+
+**Certificate algorithm:**
+- Ed25519 is signatures-only by design
+- No RSA key encipherment mechanisms exist in TLS 1.3
+- `KeyUsageDigitalSignature` correctly expresses the certificate's purpose
+
+**Common misconceptions (TLS 1.2 vs 1.3):**
+- TLS 1.2 with RSA required `KeyUsageKeyEncipherment` because the client encrypted the pre-master secret with the server's RSA public key
+- TLS 1.3 removed this mechanism entirely; key exchange is always ephemeral Diffie-Hellman
+- Requirements from TLS 1.2 documentation do NOT apply to TLS 1.3 implementations
 
 ## 15. Concurrency model
 
@@ -569,6 +629,7 @@ For this project, the recommended defaults are:
 
 - transport: `wss://` for public networks, `ws://` acceptable over VPN/trusted networks
 - authentication: mTLS when using TLS, none required for plain mode
+- TLS version: 1.3 only (`MinVersion: tls.VersionTLS13`)
 - cert generation: one-shot CA/server/client bundle (TLS mode only)
 - CA key persistence: disabled
 - hostname verification: **disabled** (authentication via CA+EKU, not endpoint identity)
@@ -583,10 +644,123 @@ For this project, the recommended defaults are:
 - overload behavior: reject
 - log level: `INFO` by default, `DEBUG` for debug mode (includes source tracking)
 
-## 20. Final design statement
+**Certificate KeyUsage:**
+- CA certificate: `KeyUsageCertSign` only (no `KeyUsageDigitalSignature` needed)
+- Server certificate: `KeyUsageDigitalSignature` only (no `KeyUsageKeyEncipherment` needed for TLS 1.3)
+- Client certificate: `KeyUsageDigitalSignature` only (no `KeyUsageKeyAgreement` needed for TLS 1.3)
+- CA `MaxPathLen`: 0 (recommended defense-in-depth)
 
-This proxy is intentionally a thin remote-exec bridge for MCP stdio, not a session broker, not a shared multi-user backend, and not a full PKI product.  
-Its purpose is to preserve the local client mental model while moving the actual MCP server execution to a remote machine. TLS/mTLS provides secure transport over untrusted networks, but can be disabled when running over VPNs or trusted tunnels for simpler deployment.
+## 20. Security Analysis Notes
+
+This section documents common misconceptions and false positives that arise during security reviews of this implementation. Refer to this section before flagging issues.
+
+### 20.1 CA Certificate KeyUsage
+
+**Misconception**: "The CA certificate should have `KeyUsageDigitalSignature` in addition to `KeyUsageCertSign`."
+
+**Reality**: 
+- `KeyUsageCertSign` exclusively governs certificate signing operations
+- `KeyUsageDigitalSignature` governs TLS authentication (proving identity during handshake)
+- The CA certificate never authenticates itself in a TLS handshake — only end-entity (server/client) certificates do
+- These are orthogonal bits with distinct purposes; adding `KeyUsageDigitalSignature` to a CA is incorrect
+- Go's `x509.CreateCertificate` only checks `KeyUsageCertSign` on the signer
+
+**Verdict**: NOT a vulnerability — this is correct X.509 semantics.
+
+### 20.2 Server/Client Certificate KeyUsage for TLS 1.3
+
+**Misconception**: "Server/client certificates need `KeyUsageKeyEncipherment` or `KeyUsageKeyAgreement`."
+
+**Reality**:
+- This requirement existed in TLS 1.2 with RSA key exchange, where the client encrypted the pre-master secret using the server's RSA public key
+- TLS 1.3 removed RSA key encipherment entirely; key exchange is always ECDHE (ephemeral Diffie-Hellman)
+- The certificate's public key is used ONLY for authentication (signing the handshake), not for key exchange
+- Ed25519 is signatures-only by design; it has no key encipherment capability
+- `KeyUsageDigitalSignature` correctly and sufficiently expresses the certificate's purpose in TLS 1.3
+
+**Verdict**: NOT a vulnerability — this is correct TLS 1.3 semantics.
+
+### 20.3 CA MaxPathLen
+
+**Misconception**: "The CA certificate must have `MaxPathLen=0` or it's insecure."
+
+**Reality**:
+- The CA private key exists only in memory during generation and is never persisted
+- After generation completes, no new certificates can be issued because the CA key no longer exists
+- `MaxPathLen=0` is defense-in-depth: it explicitly prevents intermediate CA certificates even if code is modified later
+- It is RECOMMENDED but not strictly required for security given the ephemeral CA key model
+
+**Verdict**: Setting `MaxPathLen=0` is recommended best practice, but omitting it is NOT a critical vulnerability in this specific design.
+
+### 20.4 Certificate Expiry Verification
+
+**Misconception**: "Custom `VerifyConnection` callback might not check certificate expiry."
+
+**Reality**:
+- `x509.Certificate.Verify()` automatically checks `NotBefore` and `NotAfter` timestamps
+- Expiry checking is only bypassed if `VerifyOptions.CurrentTime` is explicitly set to a non-zero value
+- This implementation does not set `CurrentTime`, so expiry is checked against `time.Now()`
+- Expired certificates are automatically rejected
+
+**Verdict**: NOT a vulnerability — expiry is checked by default.
+
+### 20.5 Hostname/SAN Verification
+
+**Misconception**: "Certificates should have SAN entries and hostname verification should be enabled."
+
+**Reality**:
+- Hostname verification is explicitly **disabled by design** (see section 12.2)
+- Authentication is based on CA signature + EKU role, not endpoint identity
+- This is appropriate for a closed trust bundle with known certificates
+- SAN entries are not required because hostname verification is disabled
+
+**Verdict**: NOT a vulnerability — this is an explicit design decision documented in section 12.2.
+
+### 20.6 EKU Verification
+
+**Misconception**: "EKU verification is not enforced."
+
+**Reality**:
+- Server-side: Go's `crypto/tls` automatically validates EKU when `ClientAuth=RequireAndVerifyClientCert`
+- Client-side: Custom `VerifyConnection` callback explicitly checks `serverAuth` EKU
+- Load-time verification also checks EKU roles via `KeyUsages` field in `VerifyOptions`
+- Role separation (server vs client) is enforced at multiple layers
+
+**Verdict**: NOT a vulnerability — EKU is verified at handshake time and load time.
+
+### 20.7 tls.LoadX509KeyPair Leaf Population
+
+**Misconception**: "`tls.LoadX509KeyPair` does not populate the `Leaf` field, so load-time verification fails."
+
+**Reality**:
+- Go documentation explicitly states: "Leaf is the parsed version of the leaf certificate. This field is populated when loading a key pair with LoadX509KeyPair..."
+- Load-time verification using `certificate.Leaf.Verify()` is valid and functional
+- This enables fail-fast detection of certificate misconfigurations at startup
+
+**Verdict**: NOT a vulnerability — `Leaf` is populated correctly.
+
+### 20.8 Certificate Chain Bundling
+
+**Observation**: If `server.crt` contains both the leaf certificate and the CA certificate (a common practice with some tools), `tls.LoadX509KeyPair` loads the first as the leaf and the rest as intermediates.
+
+**Impact**: Minimal — load-time verification still works because it verifies against the explicitly loaded `caPool`. However, for clarity, certificate files should contain only the leaf certificate.
+
+**Recommendation**: Document that certificate files should contain only the leaf certificate, not bundled chains.
+
+### 20.9 TLS Version Requirement
+
+**Critical**: This implementation requires TLS 1.3 (`MinVersion: tls.VersionTLS13`).
+
+**Rationale**:
+- TLS 1.3 simplifies KeyUsage requirements (no key encipherment needed)
+- TLS 1.3 provides stronger security guarantees
+- TLS 1.2 KeyUsage requirements do NOT apply
+
+**Verdict**: Any security analysis assuming TLS 1.2 semantics is INVALID.
+
+## 21. Final design statement
+
+This proxy is intentionally a thin remote-exec bridge for MCP stdio, not a session broker, not a shared multi-user backend, and not a full PKI product.
 
 **The mTLS implementation prioritizes simplicity over flexibility:**
 - closed trust bundle (no external CAs, no intermediate CAs),
