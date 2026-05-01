@@ -323,7 +323,7 @@ Note the IP address (e.g., `172.25.123.45` in NAT mode, or `127.0.0.1` in mirror
 {
   "mcpServers": {
     "your-linux-mcp-server": {
-      "command": "C;\\Users\\you\\Downloads\\mcptp.exe",
+      "command": "C:\\Users\\you\\Downloads\\mcptp.exe",
       "args": ["client", "ws://<WSL-IP>:7777"]
     }
   }
