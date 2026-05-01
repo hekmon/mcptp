@@ -5,6 +5,7 @@
 ## Why Use MCP Teleport?
 
 - **Remote Execution**: Run resource-intensive MCP servers on powerful remote machines while developing locally
+- **Cross-Platform Development**: Use Linux-only MCP servers from Windows via WSL ([see use case](#use-case-windows-ide-with-linux-only-mcp-server))
 - **Transparent Operation**: Your MCP client thinks it's talking to a local stdio server—no configuration changes needed
 - **Security Options**: Mutual TLS (mTLS) encryption available for untrusted networks, plain mode for trusted networks
 - **Simple Design**: One connection equals one spawned process, mirroring standard local execution behavior
