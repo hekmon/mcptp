@@ -125,9 +125,9 @@ This simplifies deployment for personal servers where you control both ends.
 
 ### Certificate Properties
 
-- **Algorithm**: Ed25519 (modern, secure, fast)
+- **Algorithm**: ECDSA P-256 (modern, efficient, widely supported)
 - **Validity**: 10 years (rotation is manual)
-- **Key Size**: 256-bit Ed25519
+- **Key Size**: 256-bit ECDSA
 - **TLS Version**: TLS 1.3 only
 
 ### Automatic Compression

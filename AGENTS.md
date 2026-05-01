@@ -433,8 +433,19 @@ Explicitly **not** written:
   - `KeyUsage=x509.KeyUsageDigitalSignature` (sufficient for TLS 1.3; same rationale as server certificate)
   - `ExtKeyUsage=[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}`
   - no SAN required
-- All certificates: Ed25519 keys (or equivalent modern algorithm)
+- All certificates: ECDSA P-256 keys
 - Validity period: ~10 years (rotation is manual bundle regeneration)
+
+**Algorithm Choice: Why ECDSA P-256 instead of Ed25519?**
+
+Ed25519 was the initial choice for its simplicity and performance. However, ECDSA P-256 was adopted for **cross-platform compatibility**:
+
+- **Windows CNG support**: Windows Cryptography Next Generation (CNG), which Go's TLS runtime uses on Windows, does not support Ed25519 in X.509 certificates for TLS. This results in `Algorithme spécifié non valide` (NTE_BAD_ALGID) errors when attempting TLS handshakes with Ed25519 certificates on Windows.
+- **Universal support**: ECDSA P-256 is fully supported across all major platforms (Windows, macOS, Linux) and is the recommended elliptic curve for TLS 1.3.
+- **Security**: P-256 provides 256-bit security level, equivalent to Ed25519, with well-understood cryptographic properties.
+- **Key size**: ECDSA P-256 keys are compact (33 bytes public key) compared to RSA while maintaining strong security.
+
+This choice prioritizes **practical compatibility** over theoretical elegance, especially important for cross-platform development scenarios (e.g., Windows IDE ↔ WSL server).
 
 **Revocation:**
 - No CRL or OCSP infrastructure
@@ -687,7 +698,7 @@ This section documents common misconceptions and false positives that arise duri
 - This requirement existed in TLS 1.2 with RSA key exchange, where the client encrypted the pre-master secret using the server's RSA public key
 - TLS 1.3 removed RSA key encipherment entirely; key exchange is always ECDHE (ephemeral Diffie-Hellman)
 - The certificate's public key is used ONLY for authentication (signing the handshake), not for key exchange
-- Ed25519 is signatures-only by design; it has no key encipherment capability
+- ECDSA P-256 is signatures-only by design; it has no key encipherment capability
 - `KeyUsageDigitalSignature` correctly and sufficiently expresses the certificate's purpose in TLS 1.3
 
 **Verdict**: NOT a vulnerability — this is correct TLS 1.3 semantics.
