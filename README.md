@@ -231,8 +231,8 @@ If you develop on Windows but need to use an MCP server that only runs on Linux 
 
 **1. In WSL (Linux):**
 ```bash
-# Start the server (no TLS needed for localhost)
-mcptp server --bind 0.0.0.0 --port 7777 -- /path/to/linux-only-mcp-server
+# Start the server bound to localhost (no TLS needed)
+mcptp server --bind 127.0.0.1 --port 7777 -- /path/to/linux-only-mcp-server
 ```
 
 **2. Configure your IDE:**
