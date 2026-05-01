@@ -185,8 +185,8 @@ OPTIONS:
    mTLS
 
    --ca string, -a string    Path to the CA certificate file
-   --cert string, -c string  Path to the TLS certificate file
-   --key string, -k string   Path to the TLS key file
+   --cert string, -c string  Path to the client certificate file
+   --key string, -k string   Path to the client key file
 ```
 
 ### Server Command
@@ -216,8 +216,8 @@ OPTIONS:
    mTLS
 
    --ca string, -a string    Path to the CA certificate file
-   --cert string, -c string  Path to the TLS certificate file
-   --key string, -k string   Path to the TLS key file
+   --cert string, -c string  Path to the server certificate file
+   --key string, -k string   Path to the server key file
 ```
 
 ### Certificate Generation

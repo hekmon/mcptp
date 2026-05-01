@@ -35,14 +35,14 @@ var Command = &cli.Command{
 		// mTLS
 		&cli.StringFlag{
 			Name:     "cert",
-			Usage:    "Path to the TLS certificate file",
+			Usage:    "Path to the client certificate file",
 			Aliases:  []string{"c"},
 			Category: "mTLS",
 			OnlyOnce: true,
 		},
 		&cli.StringFlag{
 			Name:     "key",
-			Usage:    "Path to the TLS key file",
+			Usage:    "Path to the client key file",
 			Aliases:  []string{"k"},
 			Category: "mTLS",
 			OnlyOnce: true,
