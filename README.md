@@ -176,7 +176,8 @@ USAGE:
    mcptp client [options] ws(s)://proxy-server-address:8623
 
 DESCRIPTION:
-   It will connect to the proxy server and forward stdin to it while forwarding back the server's response to stdout. To be launched by your application expecting a stdio MCP server.
+   It will connect to the proxy server and forward stdin to it while forwarding back the server's
+   response to stdout. To be launched by your application expecting a stdio MCP server.
 
 OPTIONS:
    --help, -h  show help
@@ -199,7 +200,8 @@ USAGE:
    mcptp server [options] -- path/to/mcpserver [mcpserver args...]
 
 DESCRIPTION:
-   It will start as the proxy server and spawn the process at each new connection forwarding the stdin/stdout to the client.
+   It will start as the proxy server and spawn the process at each new connection forwarding the
+   stdin/stdout to the client.
 
 OPTIONS:
    --help, -h                     show help
@@ -229,7 +231,12 @@ USAGE:
    mcptp mTLS [options]
 
 DESCRIPTION:
-   Generates a complete mTLS certificate bundle for secure client-server authentication (wss://) over untrusted networks. This command creates a self-contained PKI with: a CA certificate (ca.crt), server certificate and key (server.crt, server.key) with serverAuth EKU, and client certificate and key (client.crt, client.key) with clientAuth EKU. The CA private key is NOT persisted, ensuring no additional certificates can be issued later. To rotate certificates, regenerate the entire bundle. For trusted networks or VPNs, plain WebSocket (ws://) without TLS is acceptable.
+   Generates a complete mTLS certificate bundle for secure client-server authentication (wss://) over
+   untrusted networks. This command creates a self-contained PKI with: a CA certificate (ca.crt),
+   server certificate and key (server.crt, server.key) with serverAuth EKU, and client certificate
+   and key (client.crt, client.key) with clientAuth EKU. The CA private key is NOT persisted,
+   ensuring no additional certificates can be issued later. To rotate certificates, regenerate the
+   entire bundle. For trusted networks or VPNs, plain WebSocket (ws://) without TLS is acceptable.
 
 OPTIONS:
    --output string, -o string  Output directory for certificates (default: current directory) (default: ".")
