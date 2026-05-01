@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
 
+	"github.com/hashicorp/go-cleanhttp"
 	"github.com/hekmon/mcptp/protocol"
 
 	"github.com/coder/websocket"
@@ -109,8 +111,13 @@ var Command = &cli.Command{
 		return
 	},
 	Action: func(ctx context.Context, cmd *cli.Command) (err error) {
-		// Connect to the WebSocket server
+		// Connect to the WebSocket server using a custom HTTP client with our own TLS config (if any)
+		httpTransport := cleanhttp.DefaultTransport()
+		httpTransport.TLSClientConfig = tlsConf
 		conn, _, err := websocket.Dial(ctx, target.String(), &websocket.DialOptions{
+			HTTPClient: &http.Client{
+				Transport: httpTransport,
+			},
 			CompressionMode: compressionMode,
 		})
 		if err != nil {
