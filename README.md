@@ -167,7 +167,7 @@ GLOBAL OPTIONS:
 
 ### Client Command
 
-```bash
+```
 $ ./mcptp client -h
 NAME:
    mcptp client - Act as the proxy client
@@ -190,7 +190,7 @@ OPTIONS:
 
 ### Server Command
 
-```bash
+```
 $ ./mcptp server -h
 NAME:
    mcptp server - Act as the proxy server
