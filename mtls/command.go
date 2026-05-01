@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/hekmon/mcptp/protocol"
+
 	"github.com/urfave/cli/v3"
 )
 
@@ -31,19 +33,19 @@ var Command = &cli.Command{
 		refTime := time.Now()
 
 		// Generate the CA
-		caDER, caPriv, err := generateCA(refTime)
+		caDER, caPriv, err := protocol.GenerateCA(refTime)
 		if err != nil {
 			err = fmt.Errorf("failed to generate CA certificate/key pair: %w", err)
 			return
 		}
 		// Generate the server certificate
-		serverDER, serverPriv, err := generateServer(refTime, caDER, caPriv)
+		serverDER, serverPriv, err := protocol.GenerateServer(refTime, caDER, caPriv)
 		if err != nil {
 			err = fmt.Errorf("failed to generate server certificate/key pair: %w", err)
 			return
 		}
 		// Generate the client certificate
-		clientDER, clientPriv, err := generateClient(refTime, caDER, caPriv)
+		clientDER, clientPriv, err := protocol.GenerateClient(refTime, caDER, caPriv)
 		if err != nil {
 			err = fmt.Errorf("failed to generate client certificate/key pair: %w", err)
 			return
