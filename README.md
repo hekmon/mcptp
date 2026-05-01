@@ -98,6 +98,27 @@ mcptp client wss://remote-host:7777 \
   --ca /path/to/ca.crt
 ```
 
+## Features
+
+### Automatic Compression
+
+WebSocket compression is automatically managed based on the connection type:
+
+- **Localhost connections** (`127.0.0.1`, `::1`, `localhost`): Compression is **disabled** (no overhead needed for local traffic)
+- **Remote connections**: Compression is **enabled** (reduces bandwidth usage over network)
+
+You don't need to configure this manually—the client automatically detects loopback addresses and optimizes accordingly.
+
+### Stderr Forwarding
+
+The remote MCP server's stderr is automatically captured and forwarded to your local machine:
+
+- **Remote server logs**: All stderr output from the MCP server appears on your local stderr
+- **Prefixed output**: Forwarded stderr is prefixed with `[SERVER]` to distinguish it from local proxy messages
+- **Non-fatal**: Stderr forwarding errors never interrupt the MCP connection (stderr is diagnostic, not protocol)
+
+This helps with debugging and monitoring the remote server's operational logs.
+
 ## Security & TLS
 
 ### When to Use TLS (wss://)
@@ -129,27 +150,6 @@ This simplifies deployment for personal servers where you control both ends.
 - **Validity**: 10 years (rotation is manual)
 - **Key Size**: 256-bit ECDSA
 - **TLS Version**: TLS 1.3 only
-
-## Features
-
-### Automatic Compression
-
-WebSocket compression is automatically managed based on the connection type:
-
-- **Localhost connections** (`127.0.0.1`, `::1`, `localhost`): Compression is **disabled** (no overhead needed for local traffic)
-- **Remote connections**: Compression is **enabled** (reduces bandwidth usage over network)
-
-You don't need to configure this manually—the client automatically detects loopback addresses and optimizes accordingly.
-
-### Stderr Forwarding
-
-The remote MCP server's stderr is automatically captured and forwarded to your local machine:
-
-- **Remote server logs**: All stderr output from the MCP server appears on your local stderr
-- **Prefixed output**: Forwarded stderr is prefixed with `[SERVER]` to distinguish it from local proxy messages
-- **Non-fatal**: Stderr forwarding errors never interrupt the MCP connection (stderr is diagnostic, not protocol)
-
-This helps with debugging and monitoring the remote server's operational logs.
 
 ## Configuration
 
