@@ -80,7 +80,7 @@ var Command = &cli.Command{
 				return
 			}
 			if tlsConf, err = protocol.GetClientTLSConfig(caFile, certFile, keyFile); err != nil {
-				err = fmt.Errorf("failed to generate server TLS configuration: %w", err)
+				err = fmt.Errorf("failed to generate client TLS configuration: %w", err)
 				return
 			}
 		}
