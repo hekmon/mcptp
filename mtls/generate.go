@@ -9,8 +9,14 @@ import (
 	"fmt"
 	"math/big"
 	"time"
+)
 
-	"github.com/hekmon/mcptp/protocol"
+const (
+	mTLSValidity         = 10 * 365 * 24 * time.Hour
+	mTLSOrg              = "mcptp"
+	mTLSCACommonName     = "mcptp-CA"
+	mTLSServerCommonName = "mcptp-server"
+	mTLSClientCommonName = "mcptp-client"
 )
 
 // generateCA creates a new CA private key and self-signed certificate
@@ -25,11 +31,11 @@ func generateCA(refTime time.Time) (caDER []byte, caPriv crypto.PrivateKey, err 
 	caTmpl := &x509.Certificate{
 		SerialNumber: newSerial(),
 		Subject: pkix.Name{
-			Organization: []string{protocol.MTLSOrg},
-			CommonName:   protocol.MTLSCACommonName,
+			Organization: []string{mTLSOrg},
+			CommonName:   mTLSCACommonName,
 		},
 		NotBefore:             refTime,
-		NotAfter:              refTime.Add(protocol.MTLSValidity),
+		NotAfter:              refTime.Add(mTLSValidity),
 		IsCA:                  true,
 		BasicConstraintsValid: true,
 		KeyUsage:              x509.KeyUsageCertSign,
@@ -58,11 +64,11 @@ func generateServer(refTime time.Time, caDER []byte, caPriv crypto.PrivateKey) (
 	serverTmpl := &x509.Certificate{
 		SerialNumber: newSerial(),
 		Subject: pkix.Name{
-			Organization: []string{protocol.MTLSOrg},
-			CommonName:   protocol.MTLSServerCommonName,
+			Organization: []string{mTLSOrg},
+			CommonName:   mTLSServerCommonName,
 		},
 		NotBefore:             refTime,
-		NotAfter:              refTime.Add(protocol.MTLSValidity),
+		NotAfter:              refTime.Add(mTLSValidity),
 		IsCA:                  false,
 		BasicConstraintsValid: true,
 		KeyUsage:              x509.KeyUsageDigitalSignature,
@@ -92,11 +98,11 @@ func generateClient(refTime time.Time, caDER []byte, caPriv crypto.PrivateKey) (
 	clientTmpl := &x509.Certificate{
 		SerialNumber: newSerial(),
 		Subject: pkix.Name{
-			Organization: []string{protocol.MTLSOrg},
-			CommonName:   protocol.MTLSClientCommonName,
+			Organization: []string{mTLSOrg},
+			CommonName:   mTLSClientCommonName,
 		},
 		NotBefore:             refTime,
-		NotAfter:              refTime.Add(protocol.MTLSValidity),
+		NotAfter:              refTime.Add(mTLSValidity),
 		IsCA:                  false,
 		BasicConstraintsValid: true,
 		KeyUsage:              x509.KeyUsageDigitalSignature,

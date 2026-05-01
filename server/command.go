@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,13 +19,14 @@ import (
 
 var (
 	// Config
-	bindAddress    string
-	port           int
-	maxConnections int64
-	logLevel       string
-	// Runtime
+	bindAddress      string
+	port             int
+	maxConnections   int64
+	logLevel         string
 	mcpServerCmdline []string
-	logger           *slog.Logger
+	tlsConf          *tls.Config
+	// Runtime
+	logger *slog.Logger
 )
 
 var Command = &cli.Command{
@@ -92,6 +94,28 @@ var Command = &cli.Command{
 				return nil
 			},
 		},
+		// mTLS
+		&cli.StringFlag{
+			Name:     "cert",
+			Usage:    "Path to the TLS certificate file",
+			Aliases:  []string{"c"},
+			Category: "mTLS",
+			OnlyOnce: true,
+		},
+		&cli.StringFlag{
+			Name:     "key",
+			Usage:    "Path to the TLS key file",
+			Aliases:  []string{"k"},
+			Category: "mTLS",
+			OnlyOnce: true,
+		},
+		&cli.StringFlag{
+			Name:     "ca",
+			Usage:    "Path to the CA certificate file",
+			Aliases:  []string{"a"},
+			Category: "mTLS",
+			OnlyOnce: true,
+		},
 	},
 	Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 		// Verify the command to spawn
@@ -103,21 +127,40 @@ var Command = &cli.Command{
 		if mcpServerCmdline[0], err = exec.LookPath(mcpServerCmdline[0]); err != nil {
 			return ctx, cli.Exit(fmt.Errorf("command %q not found: %w", mcpServerCmdline[0], err), 1)
 		}
+		// Handle mTLS
+		certFile := cmd.String("cert")
+		keyFile := cmd.String("key")
+		caFile := cmd.String("ca")
+		if certFile != "" || keyFile != "" || caFile != "" {
+			if certFile == "" || keyFile == "" || caFile == "" {
+				return ctx, cli.Exit(errors.New("--cert, --key and --ca must be specified together"), 1)
+			}
+			if tlsConf, err = protocol.GetServerTLSConfig(caFile, certFile, keyFile); err != nil {
+				return ctx, cli.Exit(fmt.Errorf("failed to generate server TLS configuration: %w", err), 1)
+			}
+		}
 		return ctx, nil
 	},
 	Action: func(ctx context.Context, cmd *cli.Command) error {
 		// Prepare
 		logger = CreateLogger(logLevel)
+		var scheme string
+		if tlsConf == nil {
+			scheme = "ws"
+		} else {
+			scheme = "wss"
+		}
 		// Create the HTTP server
 		logger.Info("starting proxy server",
-			slog.String("listen", fmt.Sprintf("ws://%s:%d", bindAddress, port)),
+			slog.String("listen", fmt.Sprintf("%s://%s:%d", scheme, bindAddress, port)),
 			slog.Int64("max-connections", maxConnections),
 			slog.String("command", strings.Join(mcpServerCmdline, " ")),
 		)
 		var requests sync.WaitGroup
 		httpServer := &http.Server{
-			Addr:    fmt.Sprintf("%s:%d", bindAddress, port),
-			Handler: http.HandlerFunc(handleConnection(ctx, &requests)),
+			Addr:      fmt.Sprintf("%s:%d", bindAddress, port),
+			Handler:   http.HandlerFunc(handleConnection(ctx, &requests)),
+			TLSConfig: tlsConf,
 		}
 		// Prepare for clean shutdown
 		go cleanShutdown(ctx, httpServer)

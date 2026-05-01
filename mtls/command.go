@@ -63,7 +63,7 @@ var Command = &cli.Command{
 				err = fmt.Errorf("failed to write CA certificate: %w", err)
 				return
 			}
-			fmt.Printf("\tCA certificate: %s\n", path)
+			fmt.Printf("\t    CA certificate: %s\n", path)
 			// do NOT write CA key
 		}
 		{
