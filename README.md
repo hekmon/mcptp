@@ -68,9 +68,9 @@ mcptp mTLS --output ./certs
 ```
 
 This creates:
-- `ca.crt` — Certificate Authority (trust bundle)
-- `server.crt` + `server.key` — Server certificate and key
-- `client.crt` + `client.key` — Client certificate and key
+- `ca.crt` - Certificate Authority (trust bundle)
+- `server.crt` + `server.key` - Server certificate and key
+- `client.crt` + `client.key` - Client certificate and key
 
 **Important Security Note**: The CA private key is **never written to disk**. It exists only in memory during generation and is discarded immediately. This means:
 - ✅ Only certificates generated together can communicate (closed trust bundle)
@@ -130,6 +130,8 @@ This simplifies deployment for personal servers where you control both ends.
 - **Key Size**: 256-bit ECDSA
 - **TLS Version**: TLS 1.3 only
 
+## Features
+
 ### Automatic Compression
 
 WebSocket compression is automatically managed based on the connection type:
@@ -141,31 +143,79 @@ You don't need to configure this manually—the client automatically detects loo
 
 ## Configuration
 
+```
+$ ./mcptp -h
+NAME:
+   mcptp - MCP Teleport: A network proxy for stdio only MCP servers
+
+USAGE:
+   mcptp [global options] [command [command options]]
+
+VERSION:
+   v1.0.0 (go1.26.0, linux/amd64)
+
+COMMANDS:
+   client, c  Act as the proxy client
+   server, s  Act as the proxy server
+   mTLS, t    Create certificates needed for mTLS (mutual TLS)
+   help, h    Shows a list of commands or help for one command
+
+GLOBAL OPTIONS:
+   --help, -h     show help
+   --version, -v  print the version
+```
+
 ### Client Command
 
 ```bash
-mcptp client [options] ws(s)://host:port
+$ ./mcptp client -h
+NAME:
+   mcptp client - Act as the proxy client
 
-Options:
-  --cert, -c     Path to client certificate (mTLS required)
-  --key, -k      Path to client private key (mTLS required)
-  --ca, -a       Path to CA certificate (mTLS required)
-  --log-level, -l  Set log level: DEBUG, INFO, WARN, ERROR (default: INFO)
+USAGE:
+   mcptp client [options] ws(s)://proxy-server-address:8623
+
+DESCRIPTION:
+   It will connect to the proxy server and forward stdin to it while forwarding back the server's response to stdout. To be launched by your application expecting a stdio MCP server.
+
+OPTIONS:
+   --help, -h  show help
+
+   mTLS
+
+   --ca string, -a string    Path to the CA certificate file
+   --cert string, -c string  Path to the TLS certificate file
+   --key string, -k string   Path to the TLS key file
 ```
 
 ### Server Command
 
 ```bash
-mcptp server [options] -- /path/to/mcp-server [args...]
+$ ./mcptp server -h
+NAME:
+   mcptp server - Act as the proxy server
 
-Options:
-  --bind, -b     Address to bind to (required). Examples: `0.0.0.0` (all IPv4), `::` (all IPv6), `127.0.0.1` (localhost)
-  --port, -p     Port to bind to (default: 8623)
-  --cert, -c     Path to server certificate (mTLS required)
-  --key, -k      Path to server private key (mTLS required)
-  --ca, -a       Path to CA certificate (mTLS required)
-  --max-connections, -n  Max concurrent connections (0 = unlimited, default: 0)
-  --log-level, -l  Set log level: DEBUG, INFO, WARN, ERROR (default: INFO)
+USAGE:
+   mcptp server [options] -- path/to/mcpserver [mcpserver args...]
+
+DESCRIPTION:
+   It will start as the proxy server and spawn the process at each new connection forwarding the stdin/stdout to the client.
+
+OPTIONS:
+   --help, -h                     show help
+   --log-level string, -l string  Set the logging level. Valid values: DEBUG, INFO, WARN, ERROR (default: "INFO")
+
+   HTTP server
+
+   --bind string, -b string       Address to bind the server to. Prefer local addresses if no mTLS. Use 0.0.0.0 to bind to all v4 interfaces and :: to bind to all v6 interfaces.
+   --max-connections int, -n int  Maximum number of connections to accept. Each connection spawns a new process. 0 means illimited. (default: 0)
+   --port int, -p int             Port to use for the server. (default: 8623)
+
+   mTLS
+
+   --ca string, -a string    Path to the CA certificate file
+   --cert string, -c string  Path to the TLS certificate file
+   --key string, -k string   Path to the TLS key file
 ```
 
 ### Certificate Generation
