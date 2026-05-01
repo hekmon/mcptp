@@ -25,13 +25,13 @@
 
 ## Quick Start
 
-## Installation
+### Installation
 
-### Option 1: Precompiled Binaries (Recommended)
+#### Option 1: Precompiled Binaries (Recommended)
 
 Download the latest precompiled binary for your platform from the [GitHub Releases page](https://github.com/hekmon/mcptp/releases).
 
-### Option 2: Build from Source
+#### Option 2: Build from Source
 
 If you have Go installed, you can build from source:
 
