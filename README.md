@@ -315,7 +315,7 @@ Note the IP address (e.g., `172.25.123.45` in NAT mode, or `127.0.0.1` in mirror
 **2. In WSL (Linux) - Start the server:**
 ```bash
 # Bind to the WSL IP address found in step 1, or 127.0.0.1 if using mirrored mode
-mcptp server --bind <WSL-IP> --port 7777 -- /path/to/linux-only-mcp-server
+./mcptp server --bind <WSL-IP> --port 7777 -- /path/to/linux-only-mcp-server
 ```
 
 **3. In Windows - Configure your IDE:**
@@ -323,7 +323,7 @@ mcptp server --bind <WSL-IP> --port 7777 -- /path/to/linux-only-mcp-server
 {
   "mcpServers": {
     "your-linux-mcp-server": {
-      "command": "mcptp",
+      "command": "C;\\Users\\you\\Downloads\\mcptp.exe",
       "args": ["client", "ws://<WSL-IP>:7777"]
     }
   }
