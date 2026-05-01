@@ -238,35 +238,20 @@ If you develop on Windows but need to use an MCP server that only runs on Linux 
 
 **Setup Steps:**
 
-**1. In WSL (Linux):**
-```bash
-# Start the server bound to localhost (no TLS needed)
-mcptp server --bind 127.0.0.1 --port 7777 -- /path/to/linux-only-mcp-server
-```
-
-**2. Configure your IDE:**
-
-**If WSL mirrored networking is enabled** (recommended):
-```json
-{
-  "mcpServers": {
-    "your-linux-mcp-server": {
-      "command": "mcptp",
-      "args": ["client", "ws://localhost:7777"]
-    }
-  }
-}
-```
-
-**If using NAT mode** (default WSL1/WSL2 without mirrored networking):
-
-First, find the WSL IP address (run this on Windows):
+**1. Find your WSL IP address** (in Windows PowerShell):
 ```powershell
-# Runs 'hostname -I' inside WSL and returns the result
+# This runs 'hostname -I' inside WSL and returns the IP
 wsl hostname -I
 ```
+Note the IP address (e.g., `172.25.123.45` in NAT mode, or `127.0.0.1` in mirrored mode).
 
-Then configure your IDE with that IP:
+**2. In WSL (Linux) - Start the server:**
+```bash
+# Bind to the WSL IP address found in step 1, or 127.0.0.1 if using mirrored mode
+mcptp server --bind <WSL-IP> --port 7777 -- /path/to/linux-only-mcp-server
+```
+
+**3. In Windows - Configure your IDE:**
 ```json
 {
   "mcpServers": {
@@ -278,7 +263,8 @@ Then configure your IDE with that IP:
 }
 ```
 
-> **Tip:** Enable WSL mirrored networking mode to use `localhost` consistently. Without it, the WSL IP address changes on each restart, requiring you to update your IDE configuration frequently. To enable mirrored networking, add this to your `%USERPROFILE%\.wslconfig`:
+> **Tip:** Use the same IP address for both `--bind` (in WSL) and the client URL (in Windows).
+> **Tip:** Enable WSL mirrored networking mode to consistently use `127.0.0.1`. This avoids having to look up the IP address on each restart. To enable mirrored networking, add this to your `%USERPROFILE%\.wslconfig`:
 > ```ini
 > [wsl2]
 > networkingMode=mirrored
