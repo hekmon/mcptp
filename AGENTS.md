@@ -157,9 +157,10 @@ The server uses separate `--bind` and `--port` flags rather than a combined `--l
 - consistency with common CLI conventions.
 
 Examples:
-- `--bind :7777` - bind to all interfaces on port 7777
-- `--bind 0.0.0.0 --port 7777` - explicitly bind to IPv4 all interfaces
-- `--bind :: --port 7777` - bind to all IPv6 interfaces
+- `--bind 0.0.0.0 --port 7777` - bind to all IPv4 interfaces on port 7777
+- `--bind :: --port 7777` - bind to all IPv6 interfaces on port 7777
+- `--bind 127.0.0.1 --port 7777` - bind to localhost only on port 7777
+- `--bind 0.0.0.0` - bind to all IPv4 interfaces using default port (8623)
 
 ### 5.4 Why not raw TCP framing
 
