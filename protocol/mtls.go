@@ -46,6 +46,8 @@ func GenerateCA(refTime time.Time) (caDER []byte, caPriv crypto.PrivateKey, err 
 		IsCA:                  true,
 		BasicConstraintsValid: true,
 		KeyUsage:              x509.KeyUsageCertSign,
+		MaxPathLen:            0,    // explicitly no intermediate CAs
+		MaxPathLenZero:        true, // required, otherwise Go treats MaxPathLen:0 as "unset"
 	}
 	if caDER, err = x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, caPub, caPriv); err != nil {
 		err = fmt.Errorf("failed to create CA certificate: %w", err)
