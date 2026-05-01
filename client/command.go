@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -18,6 +19,7 @@ import (
 var (
 	// Configuration
 	target          *url.URL
+	tlsConf         *tls.Config
 	compressionMode websocket.CompressionMode
 )
 
@@ -27,7 +29,30 @@ var Command = &cli.Command{
 	Usage:       "Act as the proxy client",
 	ArgsUsage:   fmt.Sprintf("ws(s)://proxy-server-address:%d", protocol.DefaultPort),
 	Description: "It will connect to the proxy server and forward stdin to it while forwarding back the server's response to stdout. To be launched by your application expecting a stdio MCP server.",
-	Flags:       []cli.Flag{},
+	Flags: []cli.Flag{
+		// mTLS
+		&cli.StringFlag{
+			Name:     "cert",
+			Usage:    "Path to the TLS certificate file",
+			Aliases:  []string{"c"},
+			Category: "mTLS",
+			OnlyOnce: true,
+		},
+		&cli.StringFlag{
+			Name:     "key",
+			Usage:    "Path to the TLS key file",
+			Aliases:  []string{"k"},
+			Category: "mTLS",
+			OnlyOnce: true,
+		},
+		&cli.StringFlag{
+			Name:     "ca",
+			Usage:    "Path to the CA certificate file",
+			Aliases:  []string{"a"},
+			Category: "mTLS",
+			OnlyOnce: true,
+		},
+	},
 	Before: func(ctx context.Context, cmd *cli.Command) (actionCtx context.Context, err error) {
 		defer func() {
 			if err != nil {
@@ -43,19 +68,32 @@ var Command = &cli.Command{
 			err = fmt.Errorf("invalid URL: %w", err)
 			return
 		}
+		// Handle mTLS
+		certFile := cmd.String("cert")
+		keyFile := cmd.String("key")
+		caFile := cmd.String("ca")
+		if certFile != "" || keyFile != "" || caFile != "" {
+			if certFile == "" || keyFile == "" || caFile == "" {
+				err = errors.New("--cert, --key and --ca must be specified together")
+				return
+			}
+			if tlsConf, err = protocol.GetClientTLSConfig(caFile, certFile, keyFile); err != nil {
+				err = fmt.Errorf("failed to generate server TLS configuration: %w", err)
+				return
+			}
+		}
 		// Validate configuration based on the URL scheme
 		switch target.Scheme {
-		case "http":
-			target.Scheme = "ws"
-			fallthrough
 		case "ws":
-			// nothing to do yet
-		case "https":
-			target.Scheme = "wss"
-			fallthrough
+			if tlsConf != nil {
+				err = errors.New("TLS configuration is not supported for ws:// URLs")
+				return
+			}
 		case "wss":
-			err = errors.New("TLS not yet implemented")
-			return
+			if tlsConf == nil {
+				err = errors.New("TLS configuration is required for wss:// URLs")
+				return
+			}
 		default:
 			err = fmt.Errorf("invalid URL scheme, expecting 'ws' or 'wss': %s", target.Scheme)
 			return

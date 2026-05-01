@@ -8,7 +8,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
-	"io"
 	"math/big"
 	"os"
 	"time"
@@ -16,12 +15,16 @@ import (
 
 const (
 	mTLSVersion          = tls.VersionTLS13
-	mTLSValidity         = 10 * 365 * 24 * time.Hour
+	mTLSValidity         = 10 * 365 * 24 * time.Hour // does not expire on our own (10 years), let the user rotate if needed
 	mTLSOrg              = "mcptp"
 	mTLSCACommonName     = "mcptp-CA"
 	mTLSServerCommonName = "mcptp-server"
 	mTLSClientCommonName = "mcptp-client"
 )
+
+/*
+ * Generation
+ */
 
 // GenerateCA creates a new CA private key and self-signed certificate
 func GenerateCA(refTime time.Time) (caDER []byte, caPriv crypto.PrivateKey, err error) {
@@ -73,7 +76,6 @@ func GenerateServer(refTime time.Time, caDER []byte, caPriv crypto.PrivateKey) (
 		},
 		NotBefore:             refTime,
 		NotAfter:              refTime.Add(mTLSValidity),
-		IsCA:                  false,
 		BasicConstraintsValid: true,
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
@@ -107,7 +109,6 @@ func GenerateClient(refTime time.Time, caDER []byte, caPriv crypto.PrivateKey) (
 		},
 		NotBefore:             refTime,
 		NotAfter:              refTime.Add(mTLSValidity),
-		IsCA:                  false,
 		BasicConstraintsValid: true,
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
@@ -133,7 +134,7 @@ func GetServerTLSConfig(caPath, certPath, keyPath string) (tlsConf *tls.Config, 
 		return
 	}
 	// Load CA certificate and init CA pool
-	caPEM, err := readFile(caPath)
+	caPEM, err := os.ReadFile(caPath)
 	if err != nil {
 		err = fmt.Errorf("failed to read CA cert: %w", err)
 		return
@@ -161,16 +162,45 @@ func GetServerTLSConfig(caPath, certPath, keyPath string) (tlsConf *tls.Config, 
 	return
 }
 
-func readFile(path string) (content []byte, err error) {
-	fd, err := os.Open(path)
+func GetClientTLSConfig(caPath, certPath, keyPath string) (tlsConf *tls.Config, err error) {
+	// Load client certificate
+	clientCert, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
-		err = fmt.Errorf("failed to open file: %w", err)
+		err = fmt.Errorf("failed to load client cert and key: %w", err)
 		return
 	}
-	defer fd.Close()
-	if content, err = io.ReadAll(fd); err != nil {
-		err = fmt.Errorf("failed to read file: %w", err)
+	// Load CA certificate and init CA pool
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		err = fmt.Errorf("failed to read CA cert: %w", err)
 		return
+	}
+	caPool := x509.NewCertPool()
+	if !caPool.AppendCertsFromPEM(caPEM) {
+		err = fmt.Errorf("invalid %q file", caPath)
+		return
+	}
+	// Verify client certificate
+	if _, err = clientCert.Leaf.Verify(x509.VerifyOptions{
+		Roots:     caPool,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}); err != nil {
+		err = fmt.Errorf("failed to verify client certificate: %w", err)
+		return
+	}
+	// Create client TLS config
+	tlsConf = &tls.Config{
+		Certificates:       []tls.Certificate{clientCert},
+		RootCAs:            caPool,
+		MinVersion:         mTLSVersion,
+		InsecureSkipVerify: true, // skip hostname verification, CA trust enforced via VerifyConnection
+		VerifyConnection: func(cs tls.ConnectionState) (err error) {
+			_, err = cs.PeerCertificates[0].Verify(x509.VerifyOptions{
+				Roots:     caPool,
+				KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			})
+			return
+		},
 	}
 	return
 }
