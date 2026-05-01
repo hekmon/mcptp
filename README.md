@@ -330,7 +330,8 @@ mcptp server --bind <WSL-IP> --port 7777 -- /path/to/linux-only-mcp-server
 }
 ```
 
-> **Tip:** Use the same IP address for both `--bind` (in WSL) and the client URL (in Windows).
+> Use the same IP address for both `--bind` (in WSL) and the client URL (in Windows).
+
 > **Tip:** Enable WSL mirrored networking mode to consistently use `127.0.0.1`. This avoids having to look up the IP address on each restart. To enable mirrored networking, add this to your `%USERPROFILE%\.wslconfig`:
 > ```ini
 > [wsl2]

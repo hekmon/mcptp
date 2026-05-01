@@ -11,10 +11,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hashicorp/go-cleanhttp"
 	"github.com/hekmon/mcptp/protocol"
 
 	"github.com/coder/websocket"
+	"github.com/hashicorp/go-cleanhttp"
 	"github.com/urfave/cli/v3"
 )
 
