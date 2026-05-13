@@ -10,7 +10,7 @@ crosscompile () {
     else
         name='mcptp'
     fi
-    GOOS="$1" GOARCH="$2" go build -ldflags="-s -w -X 'main.Version=${version}'" -o "$name"
+    GOOS="${1}" GOARCH="${2}" go build -ldflags='-s' -o "$name"
     zip -9 "mcptp_${version}_${1}_${2}.zip" "$name"
 }
 
