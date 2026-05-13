@@ -39,3 +39,4 @@ server.crt
 server.key
 client.crt
 client.key
+mcptp_*.zip
